@@ -60,11 +60,10 @@ export function apply(ctx) {
   const registerForAgent = (agent) => {
     if (agentRegistrations.has(agent)) return;
     // DSH preset filesystem skills shadow host registrations, so mirror into the nearest Agent layer.
-    const dispose = agent.ctx.effect(
-      () => agent.ctx.skills.register(skill),
-      "delivery-video agent skill",
-    );
-    agentRegistrations.set(agent, dispose);
+    const injection = agent.ctx.inject(["skills"], (agentCtx) => {
+      agentCtx.skills.register(skill);
+    });
+    agentRegistrations.set(agent, () => injection.dispose());
   };
 
   for (const agent of ctx.agents.list()) {
@@ -81,8 +80,9 @@ export function apply(ctx) {
 
   ctx.effect(
     () => () => {
-      for (const dispose of agentRegistrations.values()) dispose();
+      const disposals = [...agentRegistrations.values()].map((dispose) => dispose());
       agentRegistrations.clear();
+      return Promise.all(disposals);
     },
     "delivery-video agent registrations",
   );
