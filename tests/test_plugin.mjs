@@ -3,18 +3,31 @@ import test from "node:test";
 import { apply, inject, name } from "../index.js";
 
 function createAgent(registrations) {
+  let active = true;
   const ctx = {
-    skills: {
-      register(skill) {
-        const registration = { skill, disposed: 0 };
-        registrations.push(registration);
-        return () => {
-          registration.disposed += 1;
-        };
-      },
-    },
-    effect(factory) {
-      return factory();
+    inject(services, callback) {
+      assert.deepEqual(services, ["skills"]);
+      const disposers = [];
+      callback({
+        skills: {
+          register(skill) {
+            const registration = { skill, disposed: 0 };
+            registrations.push(registration);
+            const dispose = () => {
+              registration.disposed += 1;
+            };
+            disposers.push(dispose);
+            return dispose;
+          },
+        },
+      });
+      return {
+        dispose() {
+          if (!active) return;
+          active = false;
+          for (const dispose of disposers.reverse()) dispose();
+        },
+      };
     },
   };
   return { ctx };
