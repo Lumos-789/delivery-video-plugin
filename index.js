@@ -3,8 +3,8 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse as parseYaml } from "yaml";
 
-const skillsRoot = fileURLToPath(new URL("./skills/", import.meta.url));
-const skillPath = join(skillsRoot, "delivery-video", "SKILL.md");
+const skillRoot = fileURLToPath(new URL("./skills/delivery-video/", import.meta.url));
+const skillPath = join(skillRoot, "SKILL.md");
 
 function readFlag(value, field) {
   if (value === undefined) return false;
@@ -44,7 +44,7 @@ function loadSkill() {
     source: "bundled",
     path: skillPath,
     content: source.slice(frontmatter[0].length).trimStart(),
-    resourceBase: { kind: "directory", path: skillsRoot },
+    resourceBase: { kind: "directory", path: skillRoot },
   };
 }
 
