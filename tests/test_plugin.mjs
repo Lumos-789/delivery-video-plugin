@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import { apply, inject, name } from "../index.js";
 
@@ -125,4 +126,16 @@ test("mirrors the skill into new Agents and releases every registration", () => 
 
   harness.dispose();
   assert.equal(currentRegistrations[0].disposed, 1);
+});
+
+test("ZCode manifest uses one skills root and stays in version sync", () => {
+  const manifest = JSON.parse(
+    readFileSync(new URL("../.zcode-plugin/plugin.json", import.meta.url), "utf8"),
+  );
+  const packageJson = JSON.parse(
+    readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+  );
+
+  assert.equal(manifest.skills, "skills");
+  assert.equal(manifest.version, packageJson.version);
 });

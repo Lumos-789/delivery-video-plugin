@@ -1,6 +1,7 @@
 import importlib.util
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -71,6 +72,16 @@ class ClockTests(unittest.TestCase):
         chars = render.align_clock(text, words)
 
         self.assertEqual("".join(char["char"] for char in chars), text)
+
+    def test_missing_ffmpeg_tools_fail_with_an_actionable_message(self):
+        with mock.patch.object(render.shutil, "which", return_value=None):
+            with self.assertRaisesRegex(render.RenderError, "ffmpeg.*ffprobe"):
+                render.check_tools()
+
+    def test_missing_cjk_font_fails_before_rendering(self):
+        with mock.patch.object(render, "FONT_CANDIDATES", []):
+            with self.assertRaisesRegex(render.RenderError, "CJK font"):
+                render.font_path()
 
 
 if __name__ == "__main__":

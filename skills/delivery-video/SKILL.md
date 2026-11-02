@@ -20,6 +20,7 @@ The skill ships its own pipeline in `scripts/` next to this file (locate them re
 Requires on the host: `python3` (3.9+), `ffmpeg`/`ffprobe` on PATH, and `pip install "edge-tts>=7.3.1" Pillow` (narration synthesis + frame drawing). edge-tts 7.2.8 and older can return HTTP 403 from the upstream service. If any prerequisite is missing, stop and report it — do not silently fall back to a weaker path.
 
 Use the same Python interpreter for preflight, render and verification. Preflight checks the runtime dependencies before touching the recording.
+On Windows, use `py -3` instead of `python3` when that is the installed launcher. The renderer also needs a CJK font; minimal Linux hosts may need `fonts-noto-cjk`.
 
 ## Completion criteria
 

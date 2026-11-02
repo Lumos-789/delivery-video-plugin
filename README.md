@@ -21,7 +21,15 @@ In DeepSeek Harness, the skill is registered in both the Host and each live Agen
 - `pip install "edge-tts>=7.3.1" Pillow`
 
 `edge-tts` 7.2.8 and older can return HTTP 403 from the upstream endpoint. Use 7.3.1 or newer; the renderer fails early with an upgrade command when the installed version is too old.
-Run `preflight.py`, `render.py` and `verify_delivery.py` with the same Python interpreter. Preflight fails early when ffmpeg/ffprobe, Pillow or a supported edge-tts version is missing.
+Run `preflight.py`, `render.py` and `verify_delivery.py` with the same Python interpreter. Preflight fails early when ffmpeg/ffprobe, Pillow, a supported edge-tts version or a CJK font is missing.
+
+Platform setup:
+
+- macOS: `brew install ffmpeg`, then `python3 -m pip install "edge-tts>=7.3.1" Pillow`
+- Windows: install FFmpeg with `winget install --id Gyan.FFmpeg -e` (or `choco install ffmpeg`). If `python3` is not available, use `py -3` consistently and run `py -3 -m pip install "edge-tts>=7.3.1" Pillow`
+- Linux: install `ffmpeg` and a CJK font such as `fonts-noto-cjk` with your package manager, then install the Python packages
+
+The renderer needs a CJK font for Chinese labels and subtitles. macOS and Windows normally provide one; minimal Linux images often do not, and preflight reports the missing font before rendering.
 
 ## Side effects (disclosed for review)
 
@@ -33,7 +41,7 @@ Run `preflight.py`, `render.py` and `verify_delivery.py` with the same Python in
 
 1. Record real takes of the feature with your usual tool (macOS `Cmd+Shift+5`, OBS, or a scripted browser screencast — see the skill's recording reference).
 2. Create `build/screen_demo-<slug>/episode.json` (copy `examples/episode.example.json`).
-3. Run the three scripts:
+3. Run the three scripts (use `py -3` instead of `python3` on Windows when needed):
 
 ```bash
 python3 <skill>/scripts/preflight.py build/screen_demo-myfeature
@@ -48,6 +56,10 @@ python3 -m unittest discover -s tests -v
 ```
 
 Suggested trial prompt after install: *"用 delivery-video 把这个项目刚完成的功能录成一段 90 秒交付演示视频"* — the skill will walk verification, storyboard, recording guidance, recipe assembly, render and gating.
+
+## ZCode skill selection
+
+ZCode 0.17.x can keep a user-level skill and a plugin skill with the same name. If an older `~/.agents/skills/delivery-video` still exists, the unqualified `/skill delivery-video` command may select that copy. Select `delivery-video:delivery-video` in the composer, or use `/skill delivery-video:delivery-video <task>`, to run the installed plugin.
 
 ## License
 

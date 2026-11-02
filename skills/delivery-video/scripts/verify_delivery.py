@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -22,7 +23,16 @@ class CheckError(Exception):
 
 
 def run_json(args: list[str]) -> dict:
-    result = subprocess.run(args, capture_output=True, text=True)
+    try:
+        result = subprocess.run(
+            args,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+    except OSError as exc:
+        raise CheckError(f"could not run {args[0]}: {exc}") from exc
     if result.returncode:
         raise CheckError(f"ffprobe failed: {result.stderr.strip()[-500:]}")
     return json.loads(result.stdout)
@@ -55,7 +65,7 @@ def sha256(path: Path) -> str:
 
 def load_json(path: Path) -> dict:
     try:
-        return json.loads(path.read_text())
+        return json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
         raise CheckError(f"invalid JSON in {path}: {exc}") from exc
 
@@ -189,6 +199,18 @@ def main() -> int:
     errors: list[str] = []
     warnings: list[str] = []
 
+    missing_tools = [
+        name for name in ("ffmpeg", "ffprobe") if shutil.which(name) is None
+    ]
+    if missing_tools:
+        return fail(
+            [
+                f"{name} is not on PATH; install ffmpeg and make sure both binaries are available"
+                for name in missing_tools
+            ],
+            warnings,
+        )
+
     if not video.is_file() or video.stat().st_size == 0:
         return fail([f"missing or empty artifact: {video}"], warnings)
 
@@ -220,10 +242,16 @@ def main() -> int:
     duration = data.get("format", {}).get("duration")
     if duration in (None, "N/A") or float(duration) <= 1:
         errors.append(f"invalid duration: {duration}")
-    decode = subprocess.run(
-        ["ffmpeg", "-v", "error", "-i", str(video), "-f", "null", "-"],
-        capture_output=True, text=True,
-    )
+    try:
+        decode = subprocess.run(
+            ["ffmpeg", "-v", "error", "-i", str(video), "-f", "null", "-"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+    except OSError as exc:
+        return fail([f"could not run ffmpeg: {exc}"], warnings)
     if decode.returncode:
         errors.append(f"decode failed: {decode.stderr.strip()[-500:]}")
 
