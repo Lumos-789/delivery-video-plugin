@@ -2,7 +2,7 @@
 
 A skill plugin that turns a feature that **actually runs** into a trustworthy delivery demo video — real screen recordings, synthesized narration, word-synced subtitles, and a deterministic quality gate that refuses to pass a fake or broken demo.
 
-Most "AI demo videos" are stitched from static screenshots, mock pages or stale recordings. This plugin enforces the opposite discipline: every segment must point at a real recording with a traceable time range, the last shot must end on a verified result state, and the artifact must pass a hard gate (resolution/fps/codec, audio presence, loudness, black frames, freeze frames, bitrate density) before anything is posted. The uploaded file is always the gated file, bound by SHA256.
+Most "AI demo videos" are stitched from static screenshots, mock pages or stale recordings. This plugin enforces the opposite discipline: every segment must point at a real recording with a traceable time range, the last shot must end on a verified result state, and the artifact must pass hard checks for resolution/FPS/codec, audio presence, loudness, black frames and freeze frames before anything is posted. Bitrate density is reported as a legibility warning; text still needs a 1:1 visual check. The uploaded file is always the gated file, bound by SHA256.
 
 ## What it does
 
@@ -16,7 +16,9 @@ Most "AI demo videos" are stitched from static screenshots, mock pages or stale 
 
 - `python3` 3.9+
 - `ffmpeg` and `ffprobe` on PATH
-- `pip install edge-tts Pillow`
+- `pip install "edge-tts>=7.3.1" Pillow`
+
+`edge-tts` 7.2.8 and older can return HTTP 403 from the upstream endpoint. Use 7.3.1 or newer; the renderer fails early with an upgrade command when the installed version is too old.
 
 ## Side effects (disclosed for review)
 
@@ -34,6 +36,12 @@ Most "AI demo videos" are stitched from static screenshots, mock pages or stale 
 python3 <skill>/scripts/preflight.py build/screen_demo-myfeature
 python3 <skill>/scripts/render.py render build/screen_demo-myfeature
 python3 <skill>/scripts/verify_delivery.py build/screen_demo-myfeature
+```
+
+Run the unit tests with:
+
+```bash
+python3 -m unittest discover -s tests -v
 ```
 
 Suggested trial prompt after install: *"用 delivery-video 把这个项目刚完成的功能录成一段 90 秒交付演示视频"* — the skill will walk verification, storyboard, recording guidance, recipe assembly, render and gating.

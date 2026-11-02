@@ -143,7 +143,7 @@ Awaiting user review — not uploaded / not published.
 | Large black areas in a take | window off-screen or occluded during recording; re-record |
 | Subtitles clipped or covering controls | adjust `crop` or shorten the narration |
 | Gate hard failure | open `report.json`, fix the material per the highest-severity item; never touch thresholds |
-| `M111` low bitrate (blurry text) | don't hand-shrink: cut duration first, re-encode at CRF, re-gate |
+| `M111` low bitrate warning | inspect text at 1:1; sparse static pages can legitimately compress below 1000 kbps. Re-record or re-encode only if text smears |
 | `T301`/`T304` freeze-heavy | cut waiting ranges, raise range speed, add a real interaction |
 | Final duration mismatch | re-render from scratch; do not trim the artifact by hand |
 | Portrait need | this pipeline is 16:9 landscape by design; use a portrait-dedicated recipe instead of hard-cropping |

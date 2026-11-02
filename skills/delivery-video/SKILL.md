@@ -17,7 +17,7 @@ The skill ships its own pipeline in `scripts/` next to this file (locate them re
 - `preflight.py` — fail-loud pre-render check of the build directory
 - `verify_delivery.py` — verify the finished artifact and its evidence chain
 
-Requires on the host: `python3` (3.9+), `ffmpeg`/`ffprobe` on PATH, and `pip install edge-tts Pillow` (narration synthesis + frame drawing). If any prerequisite is missing, stop and report it — do not silently fall back to a weaker path.
+Requires on the host: `python3` (3.9+), `ffmpeg`/`ffprobe` on PATH, and `pip install "edge-tts>=7.3.1" Pillow` (narration synthesis + frame drawing). edge-tts 7.2.8 and older can return HTTP 403 from the upstream service. If any prerequisite is missing, stop and report it — do not silently fall back to a weaker path.
 
 ## Completion criteria
 
@@ -142,7 +142,7 @@ python3 <skill>/scripts/render.py gate --video <absolute mp4 path> --work <same 
 | --- | --- | --- |
 | `E101` no audio | silent movie, no idea what's on | render via `render.py` with narration |
 | `M101`/`M102` wrong res/fps | blurry text, jitter | re-record/re-render; never scale up to fit |
-| `M111` low bitrate | text smears into blocks | don't hand-craft low bitrates; cut duration first, re-encode CRF if needed |
+| `M111` low bitrate | possible text softness on dense pages | inspect at 1:1 first; sparse static UIs can compress legitimately. Re-record or re-encode only if text actually smears |
 | `T301` long freeze | "is the player stuck?" | cut waiting ranges or add narration/interaction |
 | `T304` frozen-heavy | sluggish, "laggy" overall | speed up ranges, drop idle segments, give results their own segment |
 

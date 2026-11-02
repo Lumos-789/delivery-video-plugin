@@ -5,7 +5,8 @@ Subcommands:
   render <build-dir>                    render all segments + run the built-in gate
   gate --video <mp4> --work <dir>       run the delivery gate on any mp4 (attachment gate)
 
-Requires: python3.9+, ffmpeg & ffprobe on PATH, `pip install edge-tts Pillow`.
+Requires: python3.9+, ffmpeg & ffprobe on PATH,
+`pip install "edge-tts>=7.3.1" Pillow`.
 
 Fail-loud by design: bad episode.json, missing recordings, out-of-range speed,
 narration redline hits and gate hard failures all abort with a nonzero exit.
@@ -16,6 +17,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import bisect
+import importlib.metadata
 import json
 import math
 import re
@@ -30,6 +32,7 @@ TAIL = 0.45
 PROFILE = "delivery-v1"
 SPEED_MIN, SPEED_MAX = 0.3, 3.0
 MAX_LINE = 24
+MIN_EDGE_TTS = (7, 3, 1)
 
 BREAK_AFTER = set("。！？；!?;")
 SOFT_BREAK = set("，、,")
@@ -117,7 +120,81 @@ def check_narration(text: str, segment_id: str) -> None:
                   "external deliveries", flush=True)
 
 
+def check_edge_tts_version() -> None:
+    try:
+        raw = importlib.metadata.version("edge-tts")
+    except importlib.metadata.PackageNotFoundError as exc:
+        raise RenderError(
+            'edge-tts is not installed; run: pip install "edge-tts>=7.3.1" Pillow'
+        ) from exc
+    match = re.match(r"^(\d+)\.(\d+)\.(\d+)", raw)
+    if not match:
+        raise RenderError(f"cannot parse edge-tts version: {raw!r}")
+    installed = tuple(int(part) for part in match.groups())
+    if installed < MIN_EDGE_TTS:
+        minimum = ".".join(str(part) for part in MIN_EDGE_TTS)
+        raise RenderError(
+            f"edge-tts {raw} is too old and is known to return HTTP 403; "
+            f'install edge-tts>={minimum} with: pip install "edge-tts>={minimum}"'
+        )
+
+
+def align_clock(text: str, words: list[dict]) -> list[dict]:
+    """Expand TTS word boundaries into character clocks using the original text.
+
+    edge-tts WordBoundary events omit punctuation. Re-threading their timings
+    through the source narration preserves commas and sentence ends so subtitle
+    grouping can break where a viewer expects it.
+    """
+    if not words:
+        return []
+    chars: list[dict] = []
+    cursor = 0
+    previous_end = 0
+    for word in words:
+        token = str(word.get("char") or "")
+        if not token:
+            continue
+        index = text.find(token, cursor)
+        if index < 0:
+            raise RenderError(
+                f"TTS word boundary {token!r} is not present in narration {text!r}"
+            )
+        gap = text[cursor:index]
+        for char in gap:
+            if char.isspace():
+                continue
+            chars.append({"char": char, "start_ms": previous_end, "end_ms": previous_end})
+        if (
+            any(char.isspace() for char in gap)
+            and token[0].isascii()
+            and token[0].isalnum()
+        ):
+            chars.append(
+                {"char": " ", "start_ms": previous_end, "end_ms": previous_end}
+            )
+
+        start = int(word.get("start_ms") or 0)
+        end = max(start + 1, int(word.get("end_ms") or 0))
+        for offset, char in enumerate(token):
+            char_start = round(start + (end - start) * offset / len(token))
+            char_end = round(start + (end - start) * (offset + 1) / len(token))
+            chars.append(
+                {"char": char, "start_ms": char_start, "end_ms": char_end}
+            )
+        cursor = index + len(token)
+        previous_end = end
+
+    for char in text[cursor:]:
+        if not char.isspace():
+            chars.append(
+                {"char": char, "start_ms": previous_end, "end_ms": previous_end}
+            )
+    return chars
+
+
 async def synth(segment: dict, voice: str, rate: str, build: Path):
+    check_edge_tts_version()
     import edge_tts
     root = build / "tts"
     root.mkdir(exist_ok=True)
@@ -131,7 +208,7 @@ async def synth(segment: dict, voice: str, rate: str, build: Path):
             raise RenderError(
                 f"narration cache mismatch for {segment['id']}: edit episode.json "
                 "and delete tts/<id>.mp3/.json to re-synthesize")
-        return mp3, cached["words"]
+        return mp3, align_clock(segment["text"], cached["words"])
     words, content = [], bytearray()
     stream = edge_tts.Communicate(segment["text"], voice, rate=rate, boundary="WordBoundary")
     async for chunk in stream.stream():
@@ -145,7 +222,7 @@ async def synth(segment: dict, voice: str, rate: str, build: Path):
         raise RenderError(f"no audio or word boundaries from TTS: {segment['id']}")
     mp3.write_bytes(content)
     clock.write_text(json.dumps({**contract, "words": words}, ensure_ascii=False, indent=2))
-    return mp3, words
+    return mp3, align_clock(segment["text"], words)
 
 
 def group_lines(chars: list[dict], max_line: int = MAX_LINE) -> list[list[dict]]:
@@ -311,8 +388,13 @@ def quality_gate(video: Path, work: Path) -> dict:
         kbps = bits / total / 1000
         checks["bitrate_kbps"] = round(kbps)
         if kbps < 1000:
-            hard.append({"code": "M111",
-                         "message": f"bitrate density {kbps:.0f} kbps too low for readable 1080p text; do not re-encode small, shorten the video instead"})
+            warnings.append({
+                "code": "M111",
+                "message": (
+                    f"bitrate density {kbps:.0f} kbps is low for dense 1080p "
+                    "content; inspect text at 1:1 before publishing"
+                ),
+            })
 
     if audio_stream is not None:
         ebur = subprocess.run(

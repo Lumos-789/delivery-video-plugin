@@ -2,7 +2,7 @@
 
 把**真实运行**的功能做成可信交付演示视频的 skill 插件——真实录屏、合成旁白、逐字对齐字幕，加一道拒绝放过造假或残次演示的确定性质量闸。
 
-大多数「AI 演示视频」是静态截图、mock 页面或旧录屏拼出来的。这个插件强制相反的纪律：每个镜头必须指向一段真实录屏和可追溯的时间区间，最后一镜必须落在已回读验证的结果状态上，成片必须先过硬闸（分辨率/帧率/编码、音轨、响度、黑帧、冻结帧、码率密度）才允许外发。贴出去的文件永远是过闸的那一个文件，用 SHA256 绑定。
+大多数「AI 演示视频」是静态截图、mock 页面或旧录屏拼出来的。这个插件强制相反的纪律：每个镜头必须指向一段真实录屏和可追溯的时间区间，最后一镜必须落在已回读验证的结果状态上，成片必须先过硬检查（分辨率/帧率/编码、音轨、响度、黑帧、冻结帧）才允许外发。码率密度会作为文字清晰度提示保留，关键页面仍需按 1:1 目检。贴出去的文件永远是过闸的那一个文件，用 SHA256 绑定。
 
 ## 它做什么
 
@@ -16,7 +16,9 @@
 
 - `python3` 3.9+
 - PATH 里有 `ffmpeg` 和 `ffprobe`
-- `pip install edge-tts Pillow`
+- `pip install "edge-tts>=7.3.1" Pillow`
+
+`edge-tts` 7.2.8 及更早版本会从上游端点收到 HTTP 403。请使用 7.3.1 或更新版本；版本过低时渲染器会直接失败并给出升级命令。
 
 ## 副作用披露（审核要求如实说明）
 
@@ -34,6 +36,12 @@
 python3 <skill>/scripts/preflight.py build/screen_demo-myfeature
 python3 <skill>/scripts/render.py render build/screen_demo-myfeature
 python3 <skill>/scripts/verify_delivery.py build/screen_demo-myfeature
+```
+
+单测命令：
+
+```bash
+python3 -m unittest discover -s tests -v
 ```
 
 安装后的试用 prompt：*"用 delivery-video 把这个项目刚完成的功能录成一段 90 秒交付演示视频"*——skill 会带你走完验真、分镜、录制指引、配方组装、渲染与过闸。
