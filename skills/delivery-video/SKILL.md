@@ -51,6 +51,8 @@ Confirm from the request and the target project:
 
 When missing information would materially change the shots or wording, ask once; otherwise use conservative defaults: internal delivery, 60–120s, narration in the user's language, real test environment, landscape 1920x1080.
 
+When the feature already has acceptance cases (a test-case list, a ticket checklist, a set of regression scenarios), it is recommended to write them down before recording — one row per case: case id, what it proves, entry, precondition/test data, and the expected observable result. Keep the list in the target project, beside the build directory (`cases.md`) or in `delivery.md`. Project-specific notes stay with that project; the plugin package itself stays self-contained. This is guidance, not a gate: a single happy-path demo can skip it, but once the video covers two or more distinct flows the list is what keeps takes, narration and the final claims aligned. Do not invent cases to fill the list; use the project's real acceptance items or the user's own list.
+
 ### 2. Verify first, record second
 
 Before recording, the same version must be demonstrable live:
@@ -72,6 +74,8 @@ One segment proves one result:
 
 For external deliveries the narration states user-visible facts only — no "build", "API", "database", "pipeline", "deploy" jargon and no internal codenames. Technical acceptance may quote real commands and evidence, still exactly as run. One sentence carries one complete thought; avoid long embedded clauses. The renderer hard-fails AI-cliche patterns ("this is not X, it's Y") and warns on internal jargon.
 
+Give the video a short background opening. Before the first case, one segment — or one sentence in the first segment — should say what this feature is, who it is for and what problem this demo covers; later cases then only explain their own delta and expected result. Keep the background in the user's language and grounded in what is actually on screen. Recommended, not a required field, and the user decides how much context they want.
+
 ### 4. Record the real screen
 
 Use the recording tool you have — see [references/recording.md](references/recording.md) for per-platform options (macOS screen recording, OBS, scripted browser screencast). Rules that hold regardless of tool:
@@ -82,6 +86,10 @@ Use the recording tool you have — see [references/recording.md](references/rec
 - Browser footage recorded by a scripted screencast tool should carry a `<take>.evidence.json` beside it (sha256, size, duration, frames); mark those segments `source: "browser"` — preflight fails a browser segment without evidence.
 - Dedicated test accounts and data; crop unrelated customer info, contacts, debug panels.
 - If a take shows a long frozen frame, a blank screen, or captured notifications/privacy content — delete it and re-record. Fix the material, not the threshold.
+
+Recommended for multi-case deliveries: run and record one case at a time. A case should start from a known state and own its takes (for example `F-01-entry.mp4`, `F-02-result.mp4`), so the footage, the case id and the narration all point at the same run. Reset or prepare test data between cases instead of inheriting the previous case's result state, unless the cases genuinely share one continuous flow. Re-record a bad take in full; never splice half of one run with another to make a case look complete. Keep takes and the case list inside the target project's own media/build location, not inside the skill or plugin directory.
+
+Track the outcome per case while recording: PASS, FAIL or OBS, plus the take or evidence path and the time range used in the video. A failing case is reported as failing or left out on purpose — never silently dropped so the final video looks complete. If the user is watching a case-by-case walkthrough, run one case, state its result, and wait for them to continue before starting the next.
 
 ### 5. Assemble episode.json
 
@@ -108,6 +116,8 @@ Build directory: `build/screen_demo-<slug>/`. Full field reference: [references/
 ```
 
 `shot` is relative to the build directory; `start`/`end` select the range inside that same take; `crop` is `[x, y, w, h]` in source pixels. Speed is clamped to 0.3x–3x: if narration does not fit, split the segment or cut information — never force it.
+
+When several acceptance cases share one video, give every segment the `case` id of the run it came from and keep the case order the same as the execution order. The field stays optional; it becomes the on-screen chip and makes it easy to confirm that each case has its own result segment.
 
 Run the preflight before rendering:
 
@@ -161,7 +171,7 @@ Reply with the conclusion first, then the artifact path, duration, gate result, 
 
 - Web/desktop UI: window-level recording cropped to the content area; controls, feedback and read-back all in frame.
 - CLI/API: dedicated terminal recording real commands and real responses; mask tokens, internal hosts and debug logs.
-- Multi-case acceptance: one case per segment; the `case` field becomes the chip, narration covers only that case's delta and result.
+- Multi-case acceptance (recommended for 2+ cases): one real run per case, one result segment per case; the `case` field becomes the chip, and narration covers only that case's delta and result.
 - No visual UI: show real API responses, logs or data — never fabricate a fake UI to stand in for the product.
 - Engineering acceptance: terminal and evidence frames are fine, but lead with the business conclusion.
 

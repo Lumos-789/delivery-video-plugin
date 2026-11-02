@@ -11,7 +11,7 @@
 | `title` | no | internal identification only |
 | `segments` | yes | non-empty array, unique `id`s |
 | `segments[].id` | yes | ASCII id, e.g. `01-entry` |
-| `segments[].case` | no | acceptance-case chip shown top-left, e.g. `D-02` |
+| `segments[].case` | no | acceptance-case chip shown top-left, e.g. `D-02`; recommended when the video covers 2+ cases |
 | `segments[].label` | yes | short top-left label, 2–10 chars |
 | `segments[].shot` | yes | recording file relative to the build directory |
 | `segments[].start` | yes | range start in the source, seconds |
@@ -19,6 +19,23 @@
 | `segments[].source` | no | `browser` requires `<shot-stem>.evidence.json`; `demo-stage` requires headless-stage evidence; window recordings may say `window` or omit |
 | `segments[].crop` | no | `[x, y, w, h]` in source pixels, default `[260, 64, 1340, 780]` |
 | `segments[].text` | yes | one continuous narration line, no newlines; subtitles auto-break at punctuation |
+
+### Case list (recommended, not enforced)
+
+For a multi-case delivery, note the cases before recording and reuse the same ids everywhere (take names, `episode.json`, the delivery note). Keep this list in the target project with its build directory and delivery note; the plugin itself stays self-contained. A background block plus a compact table is enough:
+
+```text
+Feature: <what it is>
+Audience: <who uses it>
+Problem this demo covers: <one sentence>
+```
+
+| Case | Proves | Entry | Precondition / data | Expected observable result | Result |
+| --- | --- | --- | --- | --- | --- |
+| F-01 | first flow works end to end | page or command | test account/order | what the viewer must see | PASS |
+| F-02 | second flow / edge case | page or command | reset or separate data | what the viewer must see | PASS / FAIL / OBS |
+
+One row is one real run. Give its takes case-prefixed filenames and map them to segments with the same `case` id. The background block can feed the opening narration; it is a suggestion, not a required episode field. Preflight does not require this structure — it is a working aid, not a contract.
 
 ### Choosing time ranges
 
@@ -29,6 +46,7 @@
 - You may cut waiting gaps, but never merge pieces of different runs into one success.
 - Playback speed lands between 0.3x and 3x by construction; below 0.3x the action is too slow or the narration too short, above 3x the narration overruns the range — split or trim instead of forcing.
 - Aim for 15–35 characters per narration segment; important results get their own segment.
+- In a multi-case video, keep one result segment per case and follow the execution order, so the viewer can tell where one case ends and the next begins.
 
 ### Browser recording evidence
 
@@ -107,6 +125,12 @@ The gate binds to the artifact via `video_sha256`; after any re-render the gate 
 
 - <ticket/request id/page read-back/db bounds>
 - The video covers <page operations>; <database consistency/concurrency/full regression> is covered by <evidence>.
+
+## Case results (optional, recommended for multi-case videos)
+
+| Case | Result | Evidence | Video range |
+| --- | --- | --- | --- |
+| <F-01> | PASS / FAIL / OBS | <take or page evidence> | <start–end in the artifact> |
 
 ## Artifact
 
