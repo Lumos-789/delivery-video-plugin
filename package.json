@@ -1,6 +1,6 @@
 {
   "name": "delivery-video",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "Turn a feature that actually runs into a trustworthy delivery demo video: real screen recordings, edge-tts narration, word-synced subtitles and a deterministic quality gate (ffmpeg-based, self-contained pipeline).",
   "type": "module",
   "main": "index.js",
