@@ -12,9 +12,11 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.metadata
 import json
 import math
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -32,7 +34,12 @@ DEMO_STAGE_CROP = [0, 0, 1920, 1080]
 ALLOWED_SOURCES = {"browser", "window", "demo-stage"}
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from render import AI_CLICHE_PATTERNS, INTERNAL_TERMS  # noqa: E402
+from render import (  # noqa: E402
+    AI_CLICHE_PATTERNS,
+    INTERNAL_TERMS,
+    RenderError,
+    check_edge_tts_version,
+)
 
 
 class CheckError(Exception):
@@ -318,6 +325,18 @@ def main() -> int:
     episode_path = build / "episode.json"
     errors: list[str] = []
     warnings: list[str] = []
+
+    for executable in ("ffmpeg", "ffprobe"):
+        if shutil.which(executable) is None:
+            errors.append(f"{executable} is not on PATH")
+    try:
+        check_edge_tts_version()
+    except RenderError as exc:
+        errors.append(str(exc))
+    try:
+        importlib.metadata.version("Pillow")
+    except importlib.metadata.PackageNotFoundError:
+        errors.append('Pillow is not installed; run: pip install Pillow')
 
     if not build.is_dir():
         errors.append(f"missing build directory: {build}")

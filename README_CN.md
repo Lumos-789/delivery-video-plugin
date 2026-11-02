@@ -19,6 +19,7 @@
 - `pip install "edge-tts>=7.3.1" Pillow`
 
 `edge-tts` 7.2.8 及更早版本会从上游端点收到 HTTP 403。请使用 7.3.1 或更新版本；版本过低时渲染器会直接失败并给出升级命令。
+`preflight.py`、`render.py` 和 `verify_delivery.py` 要用同一个 Python 解释器运行。预检会在 ffmpeg/ffprobe、Pillow 或 edge-tts 版本不满足要求时直接失败。
 
 ## 副作用披露（审核要求如实说明）
 
