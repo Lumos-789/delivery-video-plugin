@@ -9,10 +9,11 @@ In DeepSeek Harness, the skill is registered in both the Host and each live Agen
 ## What it does
 
 1. **Verify first, record second** — the workflow requires evidence that the current version really runs (git SHA, tickets, request IDs) before any recording.
-2. **episode.json recipe** — each segment binds one real take + time range + one narration line + optional crop/case chip.
-3. **Self-contained renderer** — `render.py` synthesizes narration via edge-tts (word-boundary clocks), times each segment to its narration (0.3x–3x speed clamp), draws the label chip and word-synced subtitles, concatenates, loudness-normalizes to −14 LUFS, and runs the built-in quality gate. Output: `screen_demo.mp4` (1920×1080, 30fps, h264+AAC), `timeline.json`, cover/preview frames, `quality_gate/report.json`.
-4. **Fail-loud checks** — `preflight.py` validates the recipe before rendering (structure, intervals, crops, browser-recording evidence, TTS cache contracts, narration red lines); `verify_delivery.py` verifies the finished artifact, gate binding and optional independent visual review afterwards.
-5. **Attachment gate** — `render.py gate` runs the same hard checks on any mp4 before it goes into a ticket, chat or customer channel.
+2. **Case-driven structure (recommended)** — for multi-case deliveries the skill suggests listing the acceptance cases first, recording one real run per case, then assembling segments in execution order with a result shot per case. Optional, not a gate.
+3. **episode.json recipe** — each segment binds one real take + time range + one narration line + optional crop/case chip.
+4. **Self-contained renderer** — `render.py` synthesizes narration via edge-tts (word-boundary clocks), times each segment to its narration (0.3x–3x speed clamp), draws the label chip and word-synced subtitles, concatenates, loudness-normalizes to −14 LUFS, and runs the built-in quality gate. Output: `screen_demo.mp4` (1920×1080, 30fps, h264+AAC), `timeline.json`, cover/preview frames, `quality_gate/report.json`.
+5. **Fail-loud checks** — `preflight.py` validates the recipe before rendering (structure, intervals, crops, browser-recording evidence, TTS cache contracts, narration red lines); `verify_delivery.py` verifies the finished artifact, gate binding and optional independent visual review afterwards.
+6. **Attachment gate** — `render.py gate` runs the same hard checks on any mp4 before it goes into a ticket, chat or customer channel.
 
 ## Prerequisites
 
@@ -39,7 +40,7 @@ The renderer needs a CJK font for Chinese labels and subtitles. macOS and Window
 
 ## Quick start
 
-1. Record real takes of the feature with your usual tool (macOS `Cmd+Shift+5`, OBS, or a scripted browser screencast — see the skill's recording reference).
+1. Record real takes of the feature with your usual tool (macOS `Cmd+Shift+5`, OBS, or a scripted browser screencast — see the skill's recording reference). For two or more acceptance cases, list them first using `examples/cases.example.md` as a template, then record one real run per case.
 2. Create `build/screen_demo-<slug>/episode.json` (copy `examples/episode.example.json`).
 3. Run the three scripts (use `py -3` instead of `python3` on Windows when needed):
 
