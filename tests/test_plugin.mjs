@@ -24,7 +24,7 @@ test("registers the packaged delivery-video skill with a usable resource root", 
   assert.match(registered[0].content, /^# Delivery Video/m);
   assert.equal(registered[0].content.includes("\nname: delivery-video\n"), false);
   assert.equal(registered[0].resourceBase.kind, "directory");
-  assert.match(registered[0].resourceBase.path, /skills\/$/);
+  assert.match(registered[0].resourceBase.path, /skills\/delivery-video\/$/);
   assert.deepEqual(registered[0].invocation, {
     modelInvocable: true,
     userInvocable: true,
