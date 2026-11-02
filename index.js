@@ -54,5 +54,5 @@ export const name = "delivery-video";
 export const inject = ["skills"];
 
 export function apply(ctx) {
-  return ctx.skills.register(skill);
+  ctx.skills.register(skill);
 }

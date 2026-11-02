@@ -17,7 +17,7 @@ test("registers the packaged delivery-video skill with a usable resource root", 
 
   assert.equal(name, "delivery-video");
   assert.deepEqual(inject, ["skills"]);
-  assert.equal(result, dispose);
+  assert.equal(result, undefined);
   assert.equal(registered.length, 1);
   assert.equal(registered[0].name, "delivery-video");
   assert.match(registered[0].description, /delivery\/acceptance demo videos/);
