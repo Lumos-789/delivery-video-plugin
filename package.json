@@ -1,9 +1,12 @@
 {
   "name": "delivery-video",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Turn a feature that actually runs into a trustworthy delivery demo video: real screen recordings, edge-tts narration, word-synced subtitles and a deterministic quality gate (ffmpeg-based, self-contained pipeline).",
   "type": "module",
   "main": "index.js",
+  "scripts": {
+    "test": "python3 -m unittest discover -s tests -v"
+  },
   "exports": {
     ".": "./index.js",
     "./cordis.patch.yml": "./cordis.patch.yml",
@@ -12,7 +15,11 @@
   "files": [
     "index.js",
     "cordis.patch.yml",
-    "skills/",
+    "skills/delivery-video/SKILL.md",
+    "skills/delivery-video/references/",
+    "skills/delivery-video/scripts/preflight.py",
+    "skills/delivery-video/scripts/render.py",
+    "skills/delivery-video/scripts/verify_delivery.py",
     "examples/",
     "README.md",
     "README_CN.md",
