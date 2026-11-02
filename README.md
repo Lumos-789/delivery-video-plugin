@@ -4,7 +4,7 @@ A skill plugin that turns a feature that **actually runs** into a trustworthy de
 
 Most "AI demo videos" are stitched from static screenshots, mock pages or stale recordings. This plugin enforces the opposite discipline: every segment must point at a real recording with a traceable time range, the last shot must end on a verified result state, and the artifact must pass hard checks for resolution/FPS/codec, audio presence, loudness, black frames and freeze frames before anything is posted. Bitrate density is reported as an informational notice; text still needs a 1:1 visual check. The uploaded file is always the gated file, bound by SHA256.
 
-In DeepSeek Harness, the skill is registered at runtime so the installed plugin wins over an older same-name copy in `~/.agents/skills`; project-local skills still retain their higher override priority.
+In DeepSeek Harness, the skill is registered in both the Host and each live Agent scope. That lets the installed plugin win over an older same-name copy in `~/.agents/skills`, even when an Agent preset mounts the filesystem skill provider in a nearer layer.
 
 ## What it does
 

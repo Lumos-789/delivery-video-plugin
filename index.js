@@ -51,8 +51,39 @@ function loadSkill() {
 const skill = loadSkill();
 
 export const name = "delivery-video";
-export const inject = ["skills"];
+export const inject = ["skills", "agents"];
 
 export function apply(ctx) {
   ctx.skills.register(skill);
+
+  const agentRegistrations = new Map();
+  const registerForAgent = (agent) => {
+    if (agentRegistrations.has(agent)) return;
+    // DSH preset filesystem skills shadow host registrations, so mirror into the nearest Agent layer.
+    const dispose = agent.ctx.effect(
+      () => agent.ctx.skills.register(skill),
+      "delivery-video agent skill",
+    );
+    agentRegistrations.set(agent, dispose);
+  };
+
+  for (const agent of ctx.agents.list()) {
+    registerForAgent(agent);
+  }
+
+  ctx.on("agent/created", ({ agent }) => {
+    registerForAgent(agent);
+  });
+  ctx.on("agent/disposed", ({ agent }) => {
+    agentRegistrations.get(agent)?.();
+    agentRegistrations.delete(agent);
+  });
+
+  ctx.effect(
+    () => () => {
+      for (const dispose of agentRegistrations.values()) dispose();
+      agentRegistrations.clear();
+    },
+    "delivery-video agent registrations",
+  );
 }
