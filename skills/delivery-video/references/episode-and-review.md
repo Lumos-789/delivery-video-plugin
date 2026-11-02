@@ -86,7 +86,9 @@ An independent visual review, ideally by a second model or reviewer who has not 
 
 - `status` is `pass` and `hard_failures` is empty.
 - `score.total` plus the per-check details; don't judge by the total alone.
-- `warnings` — `E301` (long silence) and `E401` (no independent critic) do not auto-fail a technical-acceptance render, but state them honestly in the delivery note.
+- `warnings` — actionable anomalies such as `E301` (long silence); keep them visible.
+- `notices` — advisory measurements such as `M111` low bitrate density. They do not reduce the score; inspect text at 1:1.
+- `E401` is enforced only when `verify_delivery.py --require-critic` is requested for an external delivery.
 
 The gate binds to the artifact via `video_sha256`; after any re-render the gate re-runs automatically with `render.py render`. For an attachment gate on an arbitrary mp4, run `render.py gate --video <mp4> --work <dir>` — it writes its own report.
 
@@ -143,7 +145,7 @@ Awaiting user review — not uploaded / not published.
 | Large black areas in a take | window off-screen or occluded during recording; re-record |
 | Subtitles clipped or covering controls | adjust `crop` or shorten the narration |
 | Gate hard failure | open `report.json`, fix the material per the highest-severity item; never touch thresholds |
-| `M111` low bitrate warning | inspect text at 1:1; sparse static pages can legitimately compress below 1000 kbps. Re-record or re-encode only if text smears |
+| `M111` low bitrate notice | inspect text at 1:1; sparse static pages can legitimately compress below 1000 kbps. Re-record or re-encode only if text smears |
 | `T301`/`T304` freeze-heavy | cut waiting ranges, raise range speed, add a real interaction |
 | Final duration mismatch | re-render from scratch; do not trim the artifact by hand |
 | Portrait need | this pipeline is 16:9 landscape by design; use a portrait-dedicated recipe instead of hard-cropping |
