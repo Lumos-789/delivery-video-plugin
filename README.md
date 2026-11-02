@@ -19,6 +19,7 @@ Most "AI demo videos" are stitched from static screenshots, mock pages or stale 
 - `pip install "edge-tts>=7.3.1" Pillow`
 
 `edge-tts` 7.2.8 and older can return HTTP 403 from the upstream endpoint. Use 7.3.1 or newer; the renderer fails early with an upgrade command when the installed version is too old.
+Run `preflight.py`, `render.py` and `verify_delivery.py` with the same Python interpreter. Preflight fails early when ffmpeg/ffprobe, Pillow or a supported edge-tts version is missing.
 
 ## Side effects (disclosed for review)
 
