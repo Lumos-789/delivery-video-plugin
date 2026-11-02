@@ -144,7 +144,7 @@ python3 <skill>/scripts/render.py gate --video <absolute mp4 path> --work <same 
 | --- | --- | --- |
 | `E101` no audio | silent movie, no idea what's on | render via `render.py` with narration |
 | `M101`/`M102` wrong res/fps | blurry text, jitter | re-record/re-render; never scale up to fit |
-| `M111` low bitrate | possible text softness on dense pages | inspect at 1:1 first; sparse static UIs can compress legitimately. Re-record or re-encode only if text actually smears |
+| `M111` low bitrate notice | possible text softness on dense pages | inspect at 1:1 first; sparse static UIs can compress legitimately. Re-record or re-encode only if text actually smears |
 | `T301` long freeze | "is the player stuck?" | cut waiting ranges or add narration/interaction |
 | `T304` frozen-heavy | sluggish, "laggy" overall | speed up ranges, drop idle segments, give results their own segment |
 

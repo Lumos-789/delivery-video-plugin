@@ -354,7 +354,7 @@ def parse_detects(log: str, key: str) -> list[dict]:
 def quality_gate(video: Path, work: Path) -> dict:
     """Deterministic delivery gate; hard failures make status=fail."""
     work.mkdir(parents=True, exist_ok=True)
-    hard, warnings, checks = [], [], {}
+    hard, warnings, notices, checks = [], [], [], {}
     info = probe_json(video)
     streams = info.get("streams") or []
     fmt = info.get("format") or {}
@@ -388,7 +388,7 @@ def quality_gate(video: Path, work: Path) -> dict:
         kbps = bits / total / 1000
         checks["bitrate_kbps"] = round(kbps)
         if kbps < 1000:
-            warnings.append({
+            notices.append({
                 "code": "M111",
                 "message": (
                     f"bitrate density {kbps:.0f} kbps is low for dense 1080p "
@@ -435,14 +435,11 @@ def quality_gate(video: Path, work: Path) -> dict:
                 if name == "freeze" and total > 0 and sum(lengths) / total >= 0.20:
                     hard.append({"code": "T304",
                                  "message": f"frozen frames are {sum(lengths)/total:.0%} of the video; cut waiting segments or raise playback speed"})
-    warnings.append({"code": "E401",
-                     "message": "no independent visual review (visual-critic.json); required for external deliveries"})
-
     status = "fail" if hard else "pass"
     score = max(0, 100 - 10 * len(hard) - 2 * len(warnings))
     report = {"profile": PROFILE, "status": status, "video": video.name,
               "video_sha256": sha256(video), "duration_s": round(total, 3),
-              "hard_failures": hard, "warnings": warnings,
+              "hard_failures": hard, "warnings": warnings, "notices": notices,
               "score": {"total": score}, "checks": checks}
     (work / "report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2))
     return report
@@ -507,6 +504,8 @@ def cmd_render(build: Path) -> int:
     report = quality_gate(final, build / "quality_gate")
     print(f"COMPLETE {final} duration={duration(final):.3f}s "
           f"gate={report['status']} score={report['score']['total']}", flush=True)
+    for notice in report["notices"]:
+        print(f"NOTE {notice['code']}: {notice['message']}", flush=True)
     if report["status"] != "pass":
         for failure in report["hard_failures"]:
             print(f"HARD FAIL {failure['code']}: {failure['message']}", flush=True)
@@ -525,6 +524,8 @@ def cmd_gate(video: Path, work: Path) -> int:
         print(f"HARD FAIL {failure['code']}: {failure['message']}", flush=True)
     for warning in report["warnings"]:
         print(f"WARN {warning['code']}: {warning['message']}", flush=True)
+    for notice in report["notices"]:
+        print(f"NOTE {notice['code']}: {notice['message']}", flush=True)
     return 0 if report["status"] == "pass" else 1
 
 

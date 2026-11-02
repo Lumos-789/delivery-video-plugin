@@ -2,7 +2,7 @@
 
 A skill plugin that turns a feature that **actually runs** into a trustworthy delivery demo video — real screen recordings, synthesized narration, word-synced subtitles, and a deterministic quality gate that refuses to pass a fake or broken demo.
 
-Most "AI demo videos" are stitched from static screenshots, mock pages or stale recordings. This plugin enforces the opposite discipline: every segment must point at a real recording with a traceable time range, the last shot must end on a verified result state, and the artifact must pass hard checks for resolution/FPS/codec, audio presence, loudness, black frames and freeze frames before anything is posted. Bitrate density is reported as a legibility warning; text still needs a 1:1 visual check. The uploaded file is always the gated file, bound by SHA256.
+Most "AI demo videos" are stitched from static screenshots, mock pages or stale recordings. This plugin enforces the opposite discipline: every segment must point at a real recording with a traceable time range, the last shot must end on a verified result state, and the artifact must pass hard checks for resolution/FPS/codec, audio presence, loudness, black frames and freeze frames before anything is posted. Bitrate density is reported as an informational notice; text still needs a 1:1 visual check. The uploaded file is always the gated file, bound by SHA256.
 
 ## What it does
 

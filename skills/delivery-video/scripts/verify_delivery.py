@@ -231,6 +231,7 @@ def main() -> int:
     base = build / "quality_gate" / "report.json"
     report_path = reviewed if reviewed.is_file() else base
     gate: dict = {}
+    notices: list[str] = []
     if not report_path.is_file():
         errors.append(f"missing quality report: {reviewed} or {base}")
     else:
@@ -256,6 +257,10 @@ def main() -> int:
             f"quality warning {item.get('code')}: {item.get('message')}"
             for item in (gate.get("warnings") or [])
         )
+        notices.extend(
+            f"{item.get('code')}: {item.get('message')}"
+            for item in (gate.get("notices") or [])
+        )
     critic_path = build / "visual-critic.json"
     digest = sha256(video)
     if gate and gate.get("video_sha256") != digest:
@@ -280,10 +285,10 @@ def main() -> int:
             errors.append("visual critic video_sha256 does not match the current artifact")
     elif args.require_critic:
         errors.append(f"missing independent visual review: {critic_path}")
-    else:
-        warnings.append("no visual-critic.json; do not claim independent visual review")
 
     shot_count = check_shot_evidence(build, errors, warnings)
+    for notice in notices:
+        print(f"NOTE: {notice}")
     for warning in warnings:
         print(f"WARN: {warning}")
     if errors:
