@@ -39,6 +39,7 @@ from render import (  # noqa: E402
     INTERNAL_TERMS,
     RenderError,
     check_edge_tts_version,
+    font_path,
 )
 
 
@@ -47,7 +48,16 @@ class CheckError(Exception):
 
 
 def run_json(args: list[str]) -> dict:
-    result = subprocess.run(args, capture_output=True, text=True)
+    try:
+        result = subprocess.run(
+            args,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+    except OSError as exc:
+        raise CheckError(f"could not run {args[0]}: {exc}") from exc
     if result.returncode:
         raise CheckError(f"ffprobe failed for {args[-1]}: {result.stderr.strip()[-500:]}")
     try:
@@ -86,7 +96,7 @@ def load_episode(path: Path) -> dict:
     if not path.is_file():
         raise CheckError(f"missing {path}")
     try:
-        data = json.loads(path.read_text())
+        data = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
         raise CheckError(f"invalid JSON in {path}: {exc}") from exc
     if not isinstance(data, dict):
@@ -115,7 +125,7 @@ def check_evidence(prefix: str, source: Path, declared_browser: bool,
             )
         return None
     try:
-        evidence = json.loads(evidence_path.read_text())
+        evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
         errors.append(f"{prefix}: invalid evidence JSON {evidence_path.name}: {exc}")
         return None
@@ -161,7 +171,7 @@ def check_demo_stage_evidence(prefix: str, source: Path, errors: list[str]) -> d
         )
         return None
     try:
-        evidence = json.loads(evidence_path.read_text())
+        evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
         errors.append(f"{prefix}: invalid evidence JSON {evidence_path.name}: {exc}")
         return None
@@ -269,7 +279,7 @@ def check_tts(build: Path, segment: dict, start: float, end: float,
         errors.append(f"{segment_id}: incomplete TTS cache, need both .mp3 and .json")
         return False
     try:
-        cached = json.loads(clock.read_text())
+        cached = json.loads(clock.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
         errors.append(f"{segment_id}: invalid TTS clock JSON: {exc}")
         return False
@@ -326,8 +336,10 @@ def main() -> int:
     errors: list[str] = []
     warnings: list[str] = []
 
+    missing_tools: list[str] = []
     for executable in ("ffmpeg", "ffprobe"):
         if shutil.which(executable) is None:
+            missing_tools.append(executable)
             errors.append(f"{executable} is not on PATH")
     try:
         check_edge_tts_version()
@@ -337,9 +349,15 @@ def main() -> int:
         importlib.metadata.version("Pillow")
     except importlib.metadata.PackageNotFoundError:
         errors.append('Pillow is not installed; run: pip install Pillow')
+    try:
+        font_path()
+    except RenderError as exc:
+        errors.append(str(exc))
 
     if not build.is_dir():
         errors.append(f"missing build directory: {build}")
+        return report(errors, warnings)
+    if missing_tools:
         return report(errors, warnings)
     if not BUILD_NAME.match(build_path.name):
         errors.append(

@@ -20,6 +20,7 @@ import bisect
 import importlib.metadata
 import json
 import math
+import os
 import re
 import shutil
 import subprocess
@@ -46,12 +47,24 @@ FONT_CANDIDATES = [
     "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
     "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
     "/usr/share/fonts/opentype/noto/NotoSerifCJK-Regular.ttc",
+    "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/opentype/noto-cjk/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/truetype/noto-cjk/NotoSansCJK-Regular.ttc",
     "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
     "/usr/share/fonts/wenquanyi/wqy-zenhei/wqy-zenhei.ttc",
+    str(Path.home() / "Library/Fonts/PingFang.ttc"),
+    str(Path.home() / ".local/share/fonts/NotoSansCJK-Regular.ttc"),
+    str(Path.home() / ".fonts/NotoSansCJK-Regular.ttc"),
     # Windows
     "C:/Windows/Fonts/msyh.ttc",
     "C:/Windows/Fonts/simhei.ttf",
 ]
+if os.environ.get("WINDIR"):
+    windows_fonts = Path(os.environ["WINDIR"]) / "Fonts"
+    FONT_CANDIDATES[:0] = [
+        str(windows_fonts / "msyh.ttc"),
+        str(windows_fonts / "simhei.ttf"),
+    ]
 
 # Narration red lines for external deliveries. AI-cliche patterns abort the
 # render; internal-jargon terms only warn because technical acceptance videos
@@ -71,7 +84,16 @@ class RenderError(Exception):
 
 
 def run(args: list[str]) -> str:
-    result = subprocess.run(args, capture_output=True, text=True)
+    try:
+        result = subprocess.run(
+            args,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+    except OSError as exc:
+        raise RenderError(f"could not run {args[0]}: {exc}") from exc
     if result.returncode:
         raise RenderError(f"{args[0]} failed:\n{result.stderr[-2000:]}")
     return result.stdout
@@ -96,14 +118,44 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def find_font(size: int):
-    from PIL import ImageFont
+def check_tools() -> None:
+    missing = [name for name in ("ffmpeg", "ffprobe") if shutil.which(name) is None]
+    if missing:
+        raise RenderError(
+            "missing required executable(s): "
+            + ", ".join(missing)
+            + "; install ffmpeg and make sure both binaries are on PATH"
+        )
+
+
+def check_pillow() -> None:
+    try:
+        importlib.metadata.version("Pillow")
+    except importlib.metadata.PackageNotFoundError as exc:
+        raise RenderError('Pillow is not installed; run: pip install Pillow') from exc
+
+
+def font_path() -> str:
     for candidate in FONT_CANDIDATES:
         if Path(candidate).is_file():
-            return ImageFont.truetype(candidate, size)
+            return candidate
     raise RenderError(
-        "No CJK font found; install one (e.g. Noto Sans CJK) at: "
-        + ", ".join(FONT_CANDIDATES))
+        "No CJK font found for labels and subtitles; install Noto Sans CJK "
+        "(Linux: fonts-noto-cjk; Windows/macOS usually provide Microsoft YaHei "
+        "or PingFang), then rerun preflight"
+    )
+
+
+def find_font(size: int):
+    try:
+        from PIL import ImageFont
+    except ImportError as exc:
+        raise RenderError('Pillow is not installed; run: pip install Pillow') from exc
+    path = font_path()
+    try:
+        return ImageFont.truetype(path, size)
+    except OSError as exc:
+        raise RenderError(f"could not load the CJK font {path}: {exc}") from exc
 
 
 def check_narration(text: str, segment_id: str) -> None:
@@ -203,7 +255,7 @@ async def synth(segment: dict, voice: str, rate: str, build: Path):
     if mp3.exists() or clock.exists():
         if not (mp3.exists() and clock.exists()):
             raise RenderError(f"incomplete narration cache: {segment['id']}")
-        cached = json.loads(clock.read_text())
+        cached = json.loads(clock.read_text(encoding="utf-8"))
         if any(cached.get(k) != v for k, v in contract.items()):
             raise RenderError(
                 f"narration cache mismatch for {segment['id']}: edit episode.json "
@@ -221,7 +273,10 @@ async def synth(segment: dict, voice: str, rate: str, build: Path):
     if not words or not content:
         raise RenderError(f"no audio or word boundaries from TTS: {segment['id']}")
     mp3.write_bytes(content)
-    clock.write_text(json.dumps({**contract, "words": words}, ensure_ascii=False, indent=2))
+    clock.write_text(
+        json.dumps({**contract, "words": words}, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
     return mp3, align_clock(segment["text"], words)
 
 
@@ -441,15 +496,22 @@ def quality_gate(video: Path, work: Path) -> dict:
               "video_sha256": sha256(video), "duration_s": round(total, 3),
               "hard_failures": hard, "warnings": warnings, "notices": notices,
               "score": {"total": score}, "checks": checks}
-    (work / "report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2))
+    (work / "report.json").write_text(
+        json.dumps(report, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
     return report
 
 
 def cmd_render(build: Path) -> int:
+    check_tools()
+    check_edge_tts_version()
+    check_pillow()
+    font_path()
     episode_path = build / "episode.json"
     if not episode_path.is_file():
         raise RenderError(f"missing {episode_path}")
-    episode = json.loads(episode_path.read_text())
+    episode = json.loads(episode_path.read_text(encoding="utf-8"))
     segments = episode.get("segments") or []
     if not segments or len({s["id"] for s in segments}) != len(segments):
         raise RenderError("missing segments or duplicate segment IDs")
@@ -476,12 +538,15 @@ def cmd_render(build: Path) -> int:
         offset += seconds
 
     concat = build / "clips.txt"
-    concat.write_text("".join(f"file '{p.name}'\n" for p in tracks))
+    concat.write_text("".join(f"file '{p.name}'\n" for p in tracks), encoding="utf-8")
     picture = build / "picture.mp4"
     run(["ffmpeg", "-y", "-v", "error", "-f", "concat", "-safe", "0",
          "-i", str(concat), "-c", "copy", "-movflags", "+faststart", str(picture)])
     voice_list = build / "voice-clips.txt"
-    voice_list.write_text("".join(f"file '{p.with_suffix('.wav').name}'\n" for p in tracks))
+    voice_list.write_text(
+        "".join(f"file '{p.with_suffix('.wav').name}'\n" for p in tracks),
+        encoding="utf-8",
+    )
     voice = build / "voice.wav"
     run(["ffmpeg", "-y", "-v", "error", "-f", "concat", "-safe", "0",
          "-i", str(voice_list), "-c:a", "pcm_s16le", str(voice)])
@@ -500,7 +565,9 @@ def cmd_render(build: Path) -> int:
              "-ss", str((item["start"] + item["end"]) / 2), "-i", str(final),
              "-frames:v", "1", str(build / f"preview_{index:02d}.png")])
     (build / "timeline.json").write_text(
-        json.dumps(timeline, ensure_ascii=False, indent=2))
+        json.dumps(timeline, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
     report = quality_gate(final, build / "quality_gate")
     print(f"COMPLETE {final} duration={duration(final):.3f}s "
           f"gate={report['status']} score={report['score']['total']}", flush=True)
@@ -514,6 +581,7 @@ def cmd_render(build: Path) -> int:
 
 
 def cmd_gate(video: Path, work: Path) -> int:
+    check_tools()
     if not video.is_file():
         raise RenderError(f"missing video: {video}")
     report = quality_gate(video, work)

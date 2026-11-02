@@ -21,7 +21,15 @@
 - `pip install "edge-tts>=7.3.1" Pillow`
 
 `edge-tts` 7.2.8 及更早版本会从上游端点收到 HTTP 403。请使用 7.3.1 或更新版本；版本过低时渲染器会直接失败并给出升级命令。
-`preflight.py`、`render.py` 和 `verify_delivery.py` 要用同一个 Python 解释器运行。预检会在 ffmpeg/ffprobe、Pillow 或 edge-tts 版本不满足要求时直接失败。
+`preflight.py`、`render.py` 和 `verify_delivery.py` 要用同一个 Python 解释器运行。预检会在 ffmpeg/ffprobe、Pillow、edge-tts 版本或中文字体不满足要求时直接失败。
+
+不同系统的准备方式：
+
+- macOS：`brew install ffmpeg`，然后执行 `python3 -m pip install "edge-tts>=7.3.1" Pillow`
+- Windows：用 `winget install --id Gyan.FFmpeg -e`（或 `choco install ffmpeg`）安装 FFmpeg；如果没有 `python3`，统一改用 `py -3`，并执行 `py -3 -m pip install "edge-tts>=7.3.1" Pillow`
+- Linux：用包管理器安装 `ffmpeg` 和中文字体（例如 `fonts-noto-cjk`），再安装 Python 包
+
+渲染器需要中文字体来绘制标签和字幕。macOS 和 Windows 通常自带；精简 Linux 镜像可能没有，预检会在渲染前直接报告字体缺失。
 
 ## 副作用披露（审核要求如实说明）
 
@@ -33,7 +41,7 @@
 
 1. 用你惯用的工具录真实原片（macOS `Cmd+Shift+5`、OBS，或脚本化浏览器录屏——见 skill 内录制指引）。
 2. 创建 `build/screen_demo-<slug>/episode.json`（可复制 `examples/episode.example.json`）。
-3. 依次跑三个脚本：
+3. 依次跑三个脚本（Windows 没有 `python3` 时改用 `py -3`）：
 
 ```bash
 python3 <skill>/scripts/preflight.py build/screen_demo-myfeature
@@ -48,6 +56,10 @@ python3 -m unittest discover -s tests -v
 ```
 
 安装后的试用 prompt：*"用 delivery-video 把这个项目刚完成的功能录成一段 90 秒交付演示视频"*——skill 会带你走完验真、分镜、录制指引、配方组装、渲染与过闸。
+
+## ZCode 中选择插件 Skill
+
+ZCode 0.17.x 允许用户级 Skill 和插件 Skill 同名共存。如果本机还保留旧的 `~/.agents/skills/delivery-video`，直接输入 `/skill delivery-video` 可能选中旧副本。请在输入框选择 `delivery-video:delivery-video`，或使用 `/skill delivery-video:delivery-video <任务>` 调用已安装插件。
 
 ## 许可
 
