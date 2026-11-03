@@ -33,18 +33,12 @@
       "patch": "./cordis.patch.yml"
     }
   },
-  "pi": {
-    "skills": [
-      "./skills"
-    ]
-  },
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/Lumos-789/delivery-video-plugin"
   },
   "keywords": [
-    "pi-package",
     "dsh-plugin",
     "delivery",
     "demo-video",
