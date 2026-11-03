@@ -40,6 +40,8 @@ The renderer needs a CJK font for Chinese labels and subtitles. macOS and Window
 
 ## Quick start
 
+Install: `pi install git:github.com/Lumos-789/delivery-video-plugin` (Pi, no account needed) or `dsh plugin add /path/to/delivery-video-plugin` (DSH bundle). Both expose the skill in `skills/delivery-video/`.
+
 1. Record real takes of the feature with your usual tool (macOS `Cmd+Shift+5`, OBS, or a scripted browser screencast — see the skill's recording reference). For two or more acceptance cases, list them first using `examples/cases.example.md` as a template, then record one real run per case.
 2. Create `build/screen_demo-<slug>/episode.json` (copy `examples/episode.example.json`).
 3. Run the three scripts (use `py -3` instead of `python3` on Windows when needed):
@@ -58,9 +60,11 @@ python3 -m unittest discover -s tests -v
 
 Suggested trial prompt after install: *"用 delivery-video 把这个项目刚完成的功能录成一段 90 秒交付演示视频"* — the skill will walk verification, storyboard, recording guidance, recipe assembly, render and gating.
 
-## ZCode skill selection
+## Same-name skill copies
 
 ZCode 0.17.x can keep a user-level skill and a plugin skill with the same name. If an older `~/.agents/skills/delivery-video` still exists, the unqualified `/skill delivery-video` command may select that copy. Select `delivery-video:delivery-video` in the composer, or use `/skill delivery-video:delivery-video <task>`, to run the installed plugin.
+
+Pi keeps the first skill it discovers and warns `name "delivery-video" collision`. A stale `~/.agents/skills/delivery-video` is discovered before the installed package, so the package copy is dropped; remove or rename that older copy to use the package's skill.
 
 ## License
 
