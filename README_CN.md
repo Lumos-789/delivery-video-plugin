@@ -15,8 +15,8 @@
    复现步骤浮层、复现/现象镜头，以及 `feedback.json` 和可直接贴工单的
    `feedback.generated.md`。闸报告同时绑定成片 SHA256、`feedback.json` 字段的归一化哈希
    与 markdown 原始字节哈希，渲染后改动报告内容或删除/篡改 markdown 都会被
-   `verify_delivery.py` 拒绝；质量闸规则不变。
-4. **自包含渲染器**——`render.py` 用 edge-tts 合成旁白（逐字时间钟），按旁白时长配速每个镜头（0.3x–3x 变速钳制），绘制标签徽标与逐字同步字幕，拼接、响度归一到 −14 LUFS，并自动跑内置质量闸。输出：`screen_demo.mp4`（1920×1080、30fps、h264+AAC）、`timeline.json`、封面/预览帧、`quality_gate/report.json`。
+   `verify_delivery.py` 拒绝；质量闸规则不变。可从 `examples/feedback-episode.example.json` 复制起步。
+4. **自包含渲染器**——`render.py` 用 edge-tts 合成旁白（逐字时间钟），按旁白时长配速每个镜头（0.3x–3x 变速硬校验，超范围直接失败，绝不自动钳制），绘制标签徽标与逐字同步字幕，拼接、响度归一到 −14 LUFS，并自动跑内置质量闸。输出：`screen_demo.mp4`（1920×1080、30fps、h264，音轨为 AAC——非 AAC 只会得到闸警告 `E102`，不算失败）、`timeline.json`、封面/预览帧、`quality_gate/report.json`。
 5. **Fail-loud 检查**——`preflight.py` 渲染前校验配方（结构、区间、裁切、浏览器录屏证据、TTS 缓存契约、旁白红线）；`verify_delivery.py` 渲染后核验成片、闸绑定与可选的独立视觉复核。
 6. **附件闸**——`render.py gate` 对任意 mp4 跑同一套硬检查，贴进工单、群聊或客户渠道之前必须过。
 
@@ -45,6 +45,8 @@
 
 ## 快速开始
 
+安装：`dsh plugin add /path/to/delivery-video-plugin`（DSH bundle），会暴露 `skills/delivery-video/` 下的 skill。
+
 1. 用你惯用的工具录真实原片（macOS `Cmd+Shift+5`、OBS，或脚本化浏览器录屏——见 skill 内录制指引）。覆盖两条以上验收用例时，先按 `examples/cases.example.md` 拆清单，再一个 case 录一次真实运行。
 2. 创建 `build/screen_demo-<slug>/episode.json`（可复制 `examples/episode.example.json`）。
 3. 依次跑三个脚本（Windows 没有 `python3` 时改用 `py -3`）：
@@ -63,7 +65,7 @@ python3 -m unittest discover -s tests -v
 
 安装后的试用 prompt：*"用 delivery-video 把这个项目刚完成的功能录成一段 90 秒交付演示视频"*——skill 会带你走完验真、分镜、录制指引、配方组装、渲染与过闸。
 
-## ZCode 中选择插件 Skill
+## 同名 Skill 副本
 
 ZCode 0.17.x 允许用户级 Skill 和插件 Skill 同名共存。如果本机还保留旧的 `~/.agents/skills/delivery-video`，直接输入 `/skill delivery-video` 可能选中旧副本。请在输入框选择 `delivery-video:delivery-video`，或使用 `/skill delivery-video:delivery-video <任务>` 调用已安装插件。
 

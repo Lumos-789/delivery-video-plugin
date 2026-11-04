@@ -20,7 +20,7 @@
 | `segments[].start` | yes | range start in the source, seconds |
 | `segments[].end` | yes | range end, must exceed start |
 | `segments[].source` | no | `browser` requires `<shot-stem>.evidence.json`; `demo-stage` requires headless-stage evidence; window recordings may say `window` or omit |
-| `segments[].crop` | no | `[x, y, w, h]` in source pixels, default `[260, 64, 1340, 780]` |
+| `segments[].crop` | no | `[x, y, w, h]` in source pixels. Default `[260, 64, 1340, 780]` for window/browser takes; preflight treats `source: "demo-stage"` takes as the full frame `[0, 0, 1920, 1080]` (the headless stage is captured full-frame) |
 | `segments[].text` | yes | one continuous narration line, no newlines; subtitles auto-break at punctuation |
 
 ### Feedback issues
@@ -44,8 +44,11 @@ plus the exact `feedback.generated.md` bytes, so editing either file after rende
 gate. Delivery episodes without `intent` keep the original contract.
 
 During `phase: "repro"` segments the renderer also draws the first five `issue.repro` steps in
-the top-right corner; the full list stays in the generated markdown. A `phase` on a delivery
-episode is rejected, so the two modes cannot be mixed by accident.
+the top-right corner; the full list stays in the generated markdown. The severity becomes the
+first on-screen chip and the phase the second, so a viewer can tell repro from symptom without
+narration. A feedback video reports what the current build does: never mix in footage from an
+older build, claim a fix, or hide a passing case to make the defect look worse. A `phase` on a
+delivery episode is rejected, so the two modes cannot be mixed by accident.
 
 ### Generated feedback files
 
@@ -60,20 +63,7 @@ environments.
 
 ### Case list (recommended, not enforced)
 
-For a multi-case delivery, note the cases before recording and reuse the same ids everywhere (take names, `episode.json`, the delivery note). Keep this list in the target project with its build directory and delivery note; the plugin itself stays self-contained. A background block plus a compact table is enough:
-
-```text
-Feature: <what it is>
-Audience: <who uses it>
-Problem this demo covers: <one sentence>
-```
-
-| Case | Proves | Entry | Precondition / data | Expected observable result | Result |
-| --- | --- | --- | --- | --- | --- |
-| F-01 | first flow works end to end | page or command | test account/order | what the viewer must see | PASS |
-| F-02 | second flow / edge case | page or command | reset or separate data | what the viewer must see | PASS / FAIL / OBS |
-
-One row is one real run. Give its takes case-prefixed filenames and map them to segments with the same `case` id. The background block can feed the opening narration; it is a suggestion, not a required episode field. Preflight does not require this structure — it is a working aid, not a contract.
+Only for a video covering two or more cases: write one row per case — case id, what it proves, entry, precondition/data, expected observable result — and reuse the same ids in take names, `episode.json` and the delivery note. Keep it in the target project beside the build directory, never in the plugin; template: `examples/cases.example.md`.
 
 ### Choosing time ranges
 
@@ -88,11 +78,7 @@ One row is one real run. Give its takes case-prefixed filenames and map them to 
 
 ### Browser recording evidence
 
-Browser segments (recorded by a scripted screencast tool) carry `<shot-stem>.evidence.json` (`take-01.mp4` → `take-01.evidence.json`). Preflight checks:
-
-- `kind` is `cdp-screencast` or `browser-demo`; `port`, when present, is a positive integer;
-- `size` is `[1920, 1080]` and `sha256` matches the current mp4; `video_s` is within 0.2s of the measured duration; `frames` ≥ 1;
-- a `source: "browser"` segment without evidence fails immediately.
+Browser segments carry a `<shot-stem>.evidence.json` beside the take; the full contract (allowed `kind`s, required fields, 1920x1080 size, 0.2s duration tolerance) is in [recording.md](recording.md).
 
 ### Demo-stage evidence
 
@@ -143,8 +129,8 @@ An independent visual review, ideally by a second model or reviewer who has not 
 - `status` is `pass` and `hard_failures` is empty.
 - `score.total` plus the per-check details; don't judge by the total alone.
 - `warnings` — actionable anomalies such as `E301` (long silence); keep them visible.
-- `notices` — advisory measurements such as `M111` low bitrate density. They do not reduce the score; inspect text at 1:1.
-- `E401` is enforced only when `verify_delivery.py --require-critic` is requested for an external delivery.
+- `notices` — advisory measurements (e.g. bitrate density). They do not reduce the score; the gate-code table in [SKILL.md](../SKILL.md) says what to do with each code.
+- When `verify_delivery.py --require-critic` is requested for an external delivery and `visual-critic.json` is missing, verification fails with `missing independent visual review: <build>/visual-critic.json`.
 
 The gate binds to the artifact via `video_sha256`; after any re-render the gate re-runs automatically with `render.py render`. For an attachment gate on an arbitrary mp4, run `render.py gate --video <mp4> --work <dir>` — it writes its own report.
 
@@ -207,7 +193,5 @@ Awaiting user review — not uploaded / not published.
 | Large black areas in a take | window off-screen or occluded during recording; re-record |
 | Subtitles clipped or covering controls | adjust `crop` or shorten the narration |
 | Gate hard failure | open `report.json`, fix the material per the highest-severity item; never touch thresholds |
-| `M111` low bitrate notice | inspect text at 1:1; sparse static pages can legitimately compress below 1000 kbps. Re-record or re-encode only if text smears |
-| `T301`/`T304` freeze-heavy | cut waiting ranges, raise range speed, add a real interaction |
 | Final duration mismatch | re-render from scratch; do not trim the artifact by hand |
 | Portrait need | this pipeline is 16:9 landscape by design; use a portrait-dedicated recipe instead of hard-cropping |

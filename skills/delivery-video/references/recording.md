@@ -43,7 +43,7 @@ For web apps, a scripted CDP screencast gives a headless, reproducible capture w
 }
 ```
 
-`kind` may also be `"browser-demo"` for script-driven demos. Mark the segment `"source": "browser"` in episode.json — a browser segment without a matching evidence file fails preflight. `size` must be exactly 1920x1080 for browser takes, and the recorded duration must match the file within 0.2s.
+`kind` may also be `"browser-demo"` for script-driven demos. Mark the segment `"source": "browser"` in episode.json — a browser segment without a matching evidence file fails preflight. `sha256` must match the mp4, `frames` must be at least 1, `port` (when present) must be a positive integer, `size` must be exactly 1920x1080 for browser takes, and the recorded duration must match the file within 0.2s.
 
 Headless screencasts contain no mouse cursor — if the audience needs to see where clicks land, inject a highlight from your driver script or annotate click positions in post.
 

@@ -21,10 +21,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-FPS = 30
-LEAD_S = 0.15
-TAIL_S = 0.45
-DEFAULT_CROP = [260, 64, 1340, 780]
 BUILD_NAME = re.compile(r"^screen_demo(?:-[A-Za-z0-9_-]+)?$")
 SEGMENT_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
 RATE = re.compile(r"^[+-]\d+%$")
@@ -36,8 +32,14 @@ ALLOWED_SOURCES = {"browser", "window", "demo-stage"}
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from render import (  # noqa: E402
     AI_CLICHE_PATTERNS,
+    DEFAULT_CROP,
+    FPS,
     INTERNAL_TERMS,
+    LEAD as LEAD_S,
     RenderError,
+    SPEED_MAX,
+    SPEED_MIN,
+    TAIL as TAIL_S,
     check_edge_tts_version,
     feedback_errors,
     font_path,
@@ -301,9 +303,10 @@ def check_tts(build: Path, segment: dict, start: float, end: float,
         return False
     seconds = math.ceil((audio_duration + LEAD_S + TAIL_S) * FPS) / FPS
     speed = (end - start) / seconds if seconds else 0.0
-    if not 0.3 <= speed <= 3.0:
+    if not SPEED_MIN <= speed <= SPEED_MAX:
         errors.append(
-            f"{segment_id}: recording speed {speed:.2f}x outside 0.3x..3x "
+            f"{segment_id}: recording speed {speed:.2f}x outside "
+            f"{SPEED_MIN:g}x..{SPEED_MAX:g}x "
             f"(interval {end - start:.2f}s, narration {seconds:.2f}s)"
         )
     return False
