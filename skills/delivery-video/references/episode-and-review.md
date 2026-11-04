@@ -9,9 +9,12 @@
 | `voice` | yes | edge-tts voice, e.g. `zh-CN-YunxiNeural`, `en-US-AndrewNeural` |
 | `rate` | no | speech rate, default `+5%`, format `+N%` or `-N%` |
 | `title` | no | internal identification only |
+| `intent` | no | `delivery` (default) or `feedback`; feedback requires the `issue` block |
+| `issue` | for feedback | defect report metadata, see below |
 | `segments` | yes | non-empty array, unique `id`s |
 | `segments[].id` | yes | ASCII id, e.g. `01-entry` |
 | `segments[].case` | no | acceptance-case chip shown top-left, e.g. `D-02`; recommended when the video covers 2+ cases |
+| `segments[].phase` | for feedback | `context`, `repro`, `actual`, `expected` or `impact`; becomes the second chip |
 | `segments[].label` | yes | short top-left label, 2–10 chars |
 | `segments[].shot` | yes | recording file relative to the build directory |
 | `segments[].start` | yes | range start in the source, seconds |
@@ -19,6 +22,39 @@
 | `segments[].source` | no | `browser` requires `<shot-stem>.evidence.json`; `demo-stage` requires headless-stage evidence; window recordings may say `window` or omit |
 | `segments[].crop` | no | `[x, y, w, h]` in source pixels, default `[260, 64, 1340, 780]` |
 | `segments[].text` | yes | one continuous narration line, no newlines; subtitles auto-break at punctuation |
+
+### Feedback issues
+
+`intent: "feedback"` turns the artifact into a defect report while keeping the same recording and gate rules.
+
+| Field | Required | Notes |
+| --- | --- | --- |
+| `issue.title` | yes | one sentence naming the wrong behaviour |
+| `issue.severity` | yes | `blocker`, `critical`, `major` or `minor` |
+| `issue.expected` | yes | what a correct build must show |
+| `issue.actual` | yes | what this build actually shows |
+| `issue.id` | no | ticket or case id |
+| `issue.environment` | no | build, environment, account or data |
+| `issue.repro` | no | up to 12 steps, one string per step |
+
+At least one segment must use `phase: "actual"`. `render.py` writes `feedback.json` with the
+issue, the segment phases and the artifact SHA256; `verify_delivery.py` treats a missing or
+misbound report as a failure. Delivery episodes without `intent` keep the original contract.
+
+During `phase: "repro"` segments the renderer also draws the first five `issue.repro` steps in
+the top-right corner; the full list stays in the generated markdown. A `phase` on a delivery
+episode is rejected, so the two modes cannot be mixed by accident.
+
+### Generated feedback files
+
+| File | Contents |
+| --- | --- |
+| `feedback.json` | machine-readable issue, segment phases and artifact SHA256; bound to the gate report |
+| `feedback.generated.md` | ticket-ready draft: expected/actual, numbered repro steps, per-segment in-video timing and source range, artifact hash and gate result |
+
+`feedback.generated.md` is rewritten on every render — edit a copy or keep additions in a
+separate note. The draft deliberately does not claim a fix, a root cause or coverage of other
+environments.
 
 ### Case list (recommended, not enforced)
 

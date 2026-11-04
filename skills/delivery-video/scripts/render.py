@@ -34,6 +34,22 @@ PROFILE = "delivery-v1"
 SPEED_MIN, SPEED_MAX = 0.3, 3.0
 MAX_LINE = 24
 MIN_EDGE_TTS = (7, 3, 1)
+INTENTS = {"delivery", "feedback"}
+SEVERITIES = {
+    "blocker": ("P0 BLOCKER", (220, 38, 38)),
+    "critical": ("P1 CRITICAL", (234, 88, 12)),
+    "major": ("P2 MAJOR", (217, 119, 6)),
+    "minor": ("P3 MINOR", (71, 85, 105)),
+}
+PHASE_LABELS = {
+    "context": "CONTEXT",
+    "repro": "REPRO",
+    "actual": "ACTUAL",
+    "expected": "EXPECTED",
+    "impact": "IMPACT",
+}
+MAX_REPRO_STEPS = 12
+REPRO_PANEL_LIMIT = 5
 
 BREAK_AFTER = set("。！？；!?;")
 SOFT_BREAK = set("，、,")
@@ -81,6 +97,58 @@ AI_CLICHE_PATTERNS = (
 
 class RenderError(Exception):
     pass
+
+
+def feedback_errors(episode: dict, segments: list) -> list[str]:
+    """Validate the optional feedback shape; delivery episodes stay unchanged."""
+    errors: list[str] = []
+    intent = episode.get("intent", "delivery")
+    if intent not in INTENTS:
+        errors.append(f"intent must be one of {sorted(INTENTS)}, got {intent!r}")
+        return errors
+    issue = episode.get("issue")
+    if intent == "delivery":
+        if issue is not None and not isinstance(issue, dict):
+            errors.append("issue must be an object when present")
+        for segment in segments:
+            if isinstance(segment, dict) and segment.get("phase") is not None:
+                errors.append(
+                    f"{segment.get('id')}: phase is only valid when intent is 'feedback'"
+                )
+        return errors
+    if not isinstance(issue, dict):
+        errors.append("intent 'feedback' requires an issue object")
+        return errors
+    for key in ("title", "severity", "expected", "actual"):
+        value = issue.get(key)
+        if not isinstance(value, str) or not value.strip():
+            errors.append(f"issue.{key} must be a non-empty string")
+    severity = issue.get("severity")
+    if isinstance(severity, str) and severity and severity not in SEVERITIES:
+        errors.append(f"issue.severity must be one of {sorted(SEVERITIES)}, got {severity!r}")
+    repro = issue.get("repro", [])
+    if not isinstance(repro, list) or not all(
+        isinstance(item, str) and item.strip() for item in repro
+    ):
+        errors.append("issue.repro must be an array of non-empty strings")
+    elif len(repro) > MAX_REPRO_STEPS:
+        errors.append(f"issue.repro supports at most {MAX_REPRO_STEPS} steps")
+    phases: list[str] = []
+    for segment in segments:
+        if not isinstance(segment, dict):
+            continue
+        phase = segment.get("phase")
+        if phase is None:
+            continue
+        if phase not in PHASE_LABELS:
+            errors.append(
+                f"{segment.get('id')}: phase must be one of {sorted(PHASE_LABELS)}, got {phase!r}"
+            )
+            continue
+        phases.append(phase)
+    if "actual" not in phases:
+        errors.append("feedback episode needs at least one segment with phase 'actual'")
+    return errors
 
 
 def run(args: list[str]) -> str:
@@ -299,7 +367,8 @@ def group_lines(chars: list[dict], max_line: int = MAX_LINE) -> list[list[dict]]
     return lines
 
 
-def render_segment(segment: dict, mp3: Path, chars: list[dict], build: Path):
+def render_segment(segment: dict, mp3: Path, chars: list[dict], build: Path,
+                   feedback: dict | None = None):
     from PIL import Image, ImageDraw
     src = build / segment["shot"]
     if not src.is_file():
@@ -335,7 +404,11 @@ def render_segment(segment: dict, mp3: Path, chars: list[dict], build: Path):
     lines = group_lines(chars)
     starts = [line[0]["start_ms"] for line in lines]
     font, label_font, case_font = find_font(48), find_font(32), find_font(30)
-    case = segment.get("case", "")
+    panel_font, panel_head_font = find_font(24), find_font(18)
+    repro_steps = list((feedback or {}).get("repro") or [])
+    show_repro = bool(feedback) and segment.get("phase") == "repro" and bool(repro_steps)
+    case = PHASE_LABELS.get(segment.get("phase", ""), "") if feedback else segment.get("case", "")
+    severity = SEVERITIES.get((feedback or {}).get("severity", ""), ("", None))
     try:
         for frame_index in range(frames):
             content = decode.stdout.read(W * H * 3)
@@ -346,13 +419,21 @@ def render_segment(segment: dict, mp3: Path, chars: list[dict], build: Path):
             frame = Image.frombytes("RGB", (W, H), content)
             draw = ImageDraw.Draw(frame)
             label_x = 82
+            if severity[1] is not None:
+                severity_right = 56 + draw.textlength(severity[0], font=case_font) + 28
+                draw.rounded_rectangle((56, 12, severity_right, 56), radius=8, fill=severity[1])
+                draw.text((56 + 14, 34), severity[0], font=case_font, fill="white", anchor="lm")
+                label_x = severity_right + 12
             if case:
-                case_right = 56 + draw.textlength(case, font=case_font) + 28
-                draw.rounded_rectangle((56, 12, case_right, 56), radius=8, fill=(37, 99, 235))
-                draw.text((56 + 14, 34), case, font=case_font, fill="white", anchor="lm")
-                label_x = case_right + 16
+                case_right = label_x + draw.textlength(case, font=case_font) + 28
+                draw.rounded_rectangle((label_x - 4, 12, case_right, 56), radius=8,
+                                       fill=(37, 99, 235))
+                draw.text((label_x + 10, 34), case, font=case_font, fill="white", anchor="lm")
+                label_x = case_right + 12
             draw.text((label_x, 34), segment["label"], font=label_font,
                       fill=(190, 206, 230), anchor="lm")
+            if show_repro:
+                draw_repro_panel(draw, repro_steps, panel_font, panel_head_font)
             t = frame_index / FPS * 1000 - LEAD * 1000
             index = bisect.bisect_right(starts, t) - 1
             if index >= 0 and t <= lines[index][-1]["end_ms"] + 180:
@@ -372,6 +453,28 @@ def render_segment(segment: dict, mp3: Path, chars: list[dict], build: Path):
          str(output.with_suffix(".wav"))])
     print(f"RENDERED {segment['id']}: {seconds:.2f}s {speed:.2f}x", flush=True)
     return output, seconds
+
+
+def draw_repro_panel(draw, steps: list, font, head_font) -> None:
+    visible = steps[:REPRO_PANEL_LIMIT]
+    omitted = len(steps) - len(visible)
+    width, line_h = 520, 34
+    height = 62 + line_h * len(visible) + (line_h if omitted else 0) + 10
+    right, top = W - 56, 92
+    left = right - width
+    draw.rounded_rectangle((left, top, right, top + height), radius=10, fill=(16, 26, 46))
+    draw.text((left + 18, top + 22), "REPRO STEPS", font=head_font,
+              fill=(150, 176, 214), anchor="lm")
+    y = top + 52
+    for index, step in enumerate(visible):
+        text = f"{index + 1}. {step}"
+        if len(text) > 34:
+            text = text[:33] + "..."
+        draw.text((left + 18, y), text, font=font, fill=(236, 242, 250), anchor="lm")
+        y += line_h
+    if omitted:
+        draw.text((left + 18, y), f"+{omitted} more", font=head_font,
+                  fill=(150, 176, 214), anchor="lm")
 
 
 def loudnorm_finalize(raw: Path, final: Path) -> None:
@@ -503,6 +606,127 @@ def quality_gate(video: Path, work: Path) -> dict:
     return report
 
 
+def write_feedback_report(build: Path, issue: dict, segments: list[dict], report: dict) -> Path:
+    payload = {
+        "kind": "feedback",
+        "issue": issue,
+        "artifact": {
+            "file": "screen_demo.mp4",
+            "duration_s": report["duration_s"],
+            "sha256": report["video_sha256"],
+        },
+        "gate": {
+            "status": report["status"],
+            "profile": report["profile"],
+            "report": "quality_gate/report.json",
+        },
+        "segments": [
+            {
+                "id": segment["id"],
+                "phase": segment.get("phase"),
+                "shot": segment["shot"],
+                "start": segment["start"],
+                "end": segment["end"],
+            }
+            for segment in segments
+        ],
+    }
+    path = build / "feedback.json"
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    return path
+
+
+def format_clock(seconds: float) -> str:
+    total = int(round(float(seconds) * 1000))
+    minutes, remainder = divmod(total, 60_000)
+    secs, millis = divmod(remainder, 1000)
+    return f"{minutes:02d}:{secs:02d}.{millis:03d}"
+
+
+def markdown_cell(value: object) -> str:
+    return str(value).replace("|", "\\|").replace("\n", " ").strip()
+
+
+def feedback_markdown(issue: dict, segments: list[dict], timeline: list[dict],
+                      report: dict) -> str:
+    issue_id = str(issue.get("id") or "").strip()
+    heading = f"{issue_id} {issue['title']}".strip()
+    severity = issue["severity"]
+    severity_label = SEVERITIES[severity][0]
+    phases = {
+        segment["id"]: PHASE_LABELS.get(segment.get("phase", ""), "")
+        for segment in segments
+    }
+    rows = []
+    for item in timeline:
+        rows.append(
+            "| {phase} | {start}-{end} | `{source}` | {src_start:.2f}-{src_end:.2f}s |".format(
+                phase=phases.get(item["id"], "") or "-",
+                start=format_clock(item["start"]),
+                end=format_clock(item["end"]),
+                source=markdown_cell(item["source"]),
+                src_start=float(item["source_start"]),
+                src_end=float(item["source_end"]),
+            )
+        )
+    repro = issue.get("repro") or []
+    steps = "\n".join(f"{index + 1}. {step}" for index, step in enumerate(repro))
+    environment = issue.get("environment")
+    lines = [
+        f"# {heading}",
+        "",
+        "> Draft generated by render.py from episode.json. Review it and add impact or "
+        "business context before posting.",
+        "",
+        f"- Severity: `{severity}` ({severity_label})",
+    ]
+    if environment:
+        lines.append(f"- Environment: {environment}")
+    lines.extend([
+        f"- Artifact: `screen_demo.mp4` ({report['duration_s']:.3f}s, "
+        f"SHA256 `{report['video_sha256']}`)",
+        f"- Quality gate: `{report['status']}` ({report['profile']}, "
+        f"score {report['score']['total']})",
+        "",
+        "## Expected",
+        "",
+        issue["expected"],
+        "",
+        "## Actual",
+        "",
+        issue["actual"],
+        "",
+        "## Reproduction",
+        "",
+        steps or "No steps supplied.",
+        "",
+        "## Segments",
+        "",
+        "| Phase | In video | Source | Source range |",
+        "| --- | --- | --- | --- |",
+        *rows,
+        "",
+        "## Proven by this artifact",
+        "",
+        "- Every segment is a continuous take from the recording listed above.",
+        "- The quality gate is bound to the artifact SHA256; the posted file must match it.",
+        "",
+        "## Not verified",
+        "",
+        "- Whether the defect is fixed in another build.",
+        "- Whether other environments, accounts or data sets reproduce it.",
+        "",
+    ])
+    return "\n".join(lines)
+
+
+def write_feedback_markdown(build: Path, issue: dict, segments: list[dict],
+                            timeline: list[dict], report: dict) -> Path:
+    path = build / "feedback.generated.md"
+    path.write_text(feedback_markdown(issue, segments, timeline, report), encoding="utf-8")
+    return path
+
+
 def cmd_render(build: Path) -> int:
     check_tools()
     check_edge_tts_version()
@@ -515,6 +739,10 @@ def cmd_render(build: Path) -> int:
     segments = episode.get("segments") or []
     if not segments or len({s["id"] for s in segments}) != len(segments):
         raise RenderError("missing segments or duplicate segment IDs")
+    rule_errors = feedback_errors(episode, segments)
+    if rule_errors:
+        raise RenderError("; ".join(rule_errors))
+    feedback = episode.get("issue") if episode.get("intent") == "feedback" else None
     for key in ("voice",):
         if not episode.get(key):
             raise RenderError(f"episode.json missing required field: {key}")
@@ -530,7 +758,7 @@ def cmd_render(build: Path) -> int:
     for segment in segments:
         mp3, chars = asyncio.run(
             synth(segment, episode["voice"], episode.get("rate", "+5%"), build))
-        clip, seconds = render_segment(segment, mp3, chars, build)
+        clip, seconds = render_segment(segment, mp3, chars, build, feedback)
         tracks.append(clip)
         timeline.append({"id": segment["id"], "start": round(offset, 3),
                          "end": round(offset + seconds, 3), "source": segment["shot"],
@@ -569,6 +797,10 @@ def cmd_render(build: Path) -> int:
         encoding="utf-8",
     )
     report = quality_gate(final, build / "quality_gate")
+    if feedback is not None:
+        report_path = write_feedback_report(build, feedback, segments, report)
+        markdown_path = write_feedback_markdown(build, feedback, segments, timeline, report)
+        print(f"FEEDBACK {report_path} {markdown_path}", flush=True)
     print(f"COMPLETE {final} duration={duration(final):.3f}s "
           f"gate={report['status']} score={report['score']['total']}", flush=True)
     for notice in report["notices"]:

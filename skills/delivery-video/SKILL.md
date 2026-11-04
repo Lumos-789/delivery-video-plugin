@@ -1,6 +1,6 @@
 ---
 name: delivery-video
-description: Produce trustworthy delivery/acceptance demo videos of real, working software — recorded from actual screen sessions with narration, subtitles and a deterministic quality gate. Use when the user says "record a delivery video", "make a feature demo", "acceptance demo video", "录交付视频", "录个演示", "功能演示", "验收演示视频", "给客户看的功能 demo". Renders real recordings only — no static screenshots, mocks or old footage stitched into a "demo".
+description: Produce trustworthy delivery/acceptance demo videos — or defect/feedback report videos — from real screen recordings with narration, subtitles and a deterministic quality gate. Use when the user says "record a delivery video", "make a feature demo", "acceptance demo video", "bug report video", "record the defect", "录交付视频", "录个演示", "功能演示", "验收演示视频", "问题反馈视频", "缺陷复现视频", "把 bug 录下来". Renders real recordings only — no static screenshots, mocks or old footage stitched into a video.
 metadata:
   short-description: Record, render and gate trustworthy delivery demo videos
 ---
@@ -36,6 +36,8 @@ A delivery is done only when all of these hold:
 - A `delivery.md` notes version, evidence, absolute artifact path, SHA256, the actual commands, and the "not yet uploaded/published" status.
 
 A passing gate is not the user's acceptance. Posting to a ticket or group is a delivery action — do it only when the user asks in that turn; public upload or publishing waits for an explicit "send".
+
+For an `intent: "feedback"` episode the same evidence rules apply, but the result state is the **defect still being reproduced**: the last segment must show the wrong behaviour or its explicit impact, never a fix that was not actually proven.
 
 ## Workflow
 
@@ -167,11 +169,48 @@ In the target project (not inside this skill) write `delivery.md`: environment &
 
 Reply with the conclusion first, then the artifact path, duration, gate result, SHA256 and the unproven items. Never just "the video is done".
 
+## Feedback mode (defect evidence)
+
+The same renderer and gate also produce bug/feedback videos. Set `intent: "feedback"` and add an `issue` block; delivery episodes stay unchanged when the fields are absent.
+
+```json
+{
+  "intent": "feedback",
+  "voice": "zh-CN-YunxiNeural",
+  "issue": {
+    "id": "BUG-123",
+    "title": "保存金额后列表仍显示旧总额",
+    "severity": "major",
+    "environment": "staging / build <version>",
+    "expected": "保存后列表立即显示新的总额",
+    "actual": "返回列表仍显示旧总额，必须整页刷新才更新",
+    "repro": ["打开订单详情", "把金额改为 1200", "保存并返回列表"]
+  },
+  "segments": [
+    {"id": "01-repro", "phase": "repro", "label": "复现", "shot": "take-01.mp4",
+     "start": 0.5, "end": 12.0, "text": "照着三个步骤操作，保存后回到列表。"},
+    {"id": "02-actual", "phase": "actual", "label": "现象", "shot": "take-01.mp4",
+     "start": 12.0, "end": 20.0, "text": "列表这里仍然是旧总额，和刚才保存的数值对不上。"}
+  ]
+}
+```
+
+Rules:
+
+- `issue.title`, `issue.severity`, `issue.expected`, `issue.actual` are required. `severity` is one of `blocker`, `critical`, `major`, `minor`. `id`, `environment` and `repro` are optional.
+- At least one segment must carry `phase: "actual"`. Allowed phases: `context`, `repro`, `actual`, `expected`, `impact`.
+- The severity becomes the first on-screen chip and the phase the second, so a viewer can tell repro from symptom without narration.
+- During `phase: "repro"` segments the renderer overlays the first five `issue.repro` steps in the top-right. Keep steps short; the full list stays in the generated report.
+- A feedback video reports what the current build does. Do not mix in footage from an older build, do not claim a fix, and do not hide a passing case to make the defect look worse.
+- `render.py` writes `feedback.json` (issue, segment phases, artifact SHA256) and `feedback.generated.md` — a ticket-ready draft with expected/actual, numbered repro steps, per-segment source ranges and the gate result. `verify_delivery.py` fails a feedback episode whose JSON report is missing or bound to another file.
+- `feedback.generated.md` is overwritten on every render. Treat it as the source for the ticket; add impact and business context in a separate note or edit a copy, do not hand-edit the generated file.
+
 ## Common shapes
 
 - Web/desktop UI: window-level recording cropped to the content area; controls, feedback and read-back all in frame.
 - CLI/API: dedicated terminal recording real commands and real responses; mask tokens, internal hosts and debug logs.
 - Multi-case acceptance (recommended for 2+ cases): one real run per case, one result segment per case; the `case` field becomes the chip, and narration covers only that case's delta and result.
+- Defect report: one continuous take that reproduces the problem, with `phase` segments for repro and actual; the `expected` state can be one narration line or a separate real segment when an earlier build is legitimately available.
 - No visual UI: show real API responses, logs or data — never fabricate a fake UI to stand in for the product.
 - Engineering acceptance: terminal and evidence frames are fine, but lead with the business conclusion.
 
