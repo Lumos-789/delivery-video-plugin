@@ -28,7 +28,7 @@ A delivery is done only when all of these hold:
 
 - Evidence the current version really runs: git SHA, deployed or local version, real test ticket/account/request IDs.
 - Every segment in `episode.json` points at a real recording with a traceable time range.
-- The artifact is rendered by `render.py`: 1920x1080, 30fps, h264 + AAC, with narration and burned subtitles.
+- The artifact is rendered by `render.py`: 1920x1080, 30fps, h264 with narration and burned subtitles. AAC is what the renderer produces, but a non-AAC audio track is only a gate warning (`E102`), not a hard failure.
 - The last segment ends on a **result state** — a title, data or success message visible and read back, never on a waiting spinner or a black frame.
 - `quality_gate/report.json` has `status: "pass"` and empty `hard_failures`; never loosen thresholds to pass.
 - Key frames have been visually inspected; for external deliveries an independent `visual-critic.json` review is required (`verify_delivery.py --require-critic`).
@@ -74,7 +74,7 @@ One segment proves one result:
 | 02-action | F-01 | key operation | real click/submit, save evidence | what the user did, what the system answered |
 | 03-result | F-01 | result read-back | refresh/read back, result still there | the business outcome, not the internals |
 
-For external deliveries the narration states user-visible facts only — no "build", "API", "database", "pipeline", "deploy" jargon and no internal codenames. Technical acceptance may quote real commands and evidence, still exactly as run. One sentence carries one complete thought; avoid long embedded clauses. The renderer hard-fails AI-cliche patterns ("this is not X, it's Y") and warns on internal jargon.
+For external deliveries the narration states user-visible facts only — no "build", "API", "database", "pipeline", "deploy" jargon and no internal codenames. Technical acceptance may quote real commands and evidence, still exactly as run. One sentence carries one complete thought; avoid long embedded clauses. The renderer hard-fails one Chinese AI-cliche template — `这…不是…而是/是` (for example 「这不是慢，而是缓存没刷新」) — and warns on internal jargon. The English "this is not X, it's Y" shape is not matched, so this red line only bites Chinese narration.
 
 Give the video a short background opening. Before the first case, one segment — or one sentence in the first segment — should say what this feature is, who it is for and what problem this demo covers; later cases then only explain their own delta and expected result. Keep the background in the user's language and grounded in what is actually on screen. Recommended, not a required field, and the user decides how much context they want.
 
@@ -117,7 +117,7 @@ Build directory: `build/screen_demo-<slug>/`. Full field reference: [references/
 }
 ```
 
-`shot` is relative to the build directory; `start`/`end` select the range inside that same take; `crop` is `[x, y, w, h]` in source pixels. Speed is clamped to 0.3x–3x: if narration does not fit, split the segment or cut information — never force it.
+`shot` is relative to the build directory; `start`/`end` select the range inside that same take; `crop` is `[x, y, w, h]` in source pixels. Speed is hard-checked, not clamped: outside 0.3x–3x both preflight and render fail instead of adjusting the speed, so if narration does not fit, split the segment or cut information — never force it.
 
 When several acceptance cases share one video, give every segment the `case` id of the run it came from and keep the case order the same as the execution order. The field stays optional; it becomes the on-screen chip and makes it easy to confirm that each case has its own result segment.
 
@@ -143,7 +143,7 @@ This synthesizes narration (edge-tts, cached per segment), times each segment to
 python3 <skill>/scripts/verify_delivery.py build/screen_demo-<slug> --require-critic
 ```
 
-Checks decode integrity, spec (h264/1080p30/aac), gate report binding (video_sha256), per-shot evidence and the visual critic. Then actually watch it — at least the opening, every key operation, the result read-back and the ending. For an independent review, have a second model/window review key frames without seeing your conclusions first, write `visual-critic.json` (schema in the references file), and only then claim independent review.
+Checks decode integrity, spec (h264/1080p30; aac is checked but warn-only), gate report binding (video_sha256), per-shot evidence and the visual critic. Then actually watch it — at least the opening, every key operation, the result read-back and the ending. For an independent review, have a second model/window review key frames without seeing your conclusions first, write `visual-critic.json` (schema in the references file), and only then claim independent review.
 
 ### 8. Attachment gate before posting
 
@@ -160,6 +160,8 @@ python3 <skill>/scripts/render.py gate --video <absolute mp4 path> --work <same 
 | `M111` low bitrate notice | possible text softness on dense pages | inspect at 1:1 first; sparse static UIs can compress legitimately. Re-record or re-encode only if text actually smears |
 | `T301` long freeze | "is the player stuck?" | cut waiting ranges or add narration/interaction |
 | `T304` frozen-heavy | sluggish, "laggy" overall | speed up ranges, drop idle segments, give results their own segment |
+
+`E102` (non-AAC audio) is the one gate code that is a **warning**: the gate still passes and `verify_delivery.py` only prints a WARN.
 
 One artifact has exactly one gated file: record the SHA256 before upload, read it back after posting. Never re-encode a gated file by hand — that breaks the evidence chain.
 
@@ -197,13 +199,11 @@ The same renderer and gate also produce bug/feedback videos. Set `intent: "feedb
 
 Rules:
 
-- `issue.title`, `issue.severity`, `issue.expected`, `issue.actual` are required. `severity` is one of `blocker`, `critical`, `major`, `minor`. `id`, `environment` and `repro` are optional.
-- At least one segment must carry `phase: "actual"`. Allowed phases: `context`, `repro`, `actual`, `expected`, `impact`.
-- The severity becomes the first on-screen chip and the phase the second, so a viewer can tell repro from symptom without narration.
-- During `phase: "repro"` segments the renderer overlays the first five `issue.repro` steps in the top-right. Keep steps short; the full list stays in the generated report.
-- A feedback video reports what the current build does. Do not mix in footage from an older build, do not claim a fix, and do not hide a passing case to make the defect look worse.
-- `render.py` writes `feedback.json` (issue, segment phases, artifact SHA256) and `feedback.generated.md` — a ticket-ready draft with expected/actual, numbered repro steps, per-segment source ranges and the gate result. The gate report also binds a normalized hash of `feedback.json` and the exact markdown bytes; `verify_delivery.py` fails a feedback episode whose JSON report is missing or bound to another file, whose report content was edited after rendering, or whose markdown is missing or edited.
-- `feedback.generated.md` is overwritten on every render. Treat it as the source for the ticket; add impact and business context in a separate note or edit a copy, do not hand-edit the generated file.
+- `issue.title`, `issue.severity`, `issue.expected` and `issue.actual` are required; `severity` is one of `blocker`, `critical`, `major`, `minor`; `id`, `environment` and `repro` are optional.
+- At least one segment must carry `phase: "actual"`. Allowed phases: `context`, `repro`, `actual`, `expected`, `impact`; a `phase` on a delivery episode is rejected.
+- The gate report binds a normalized hash of `feedback.json` and the exact bytes of `feedback.generated.md`; `verify_delivery.py` fails a report or markdown edited, missing or misbound after rendering. `feedback.generated.md` is overwritten on every render — add impact and business context in a separate note or an edited copy, never in the generated file.
+
+Chips, the repro overlay, the generated-file contract and the "report the current build only" rule: [references/episode-and-review.md](references/episode-and-review.md).
 
 ## Common shapes
 

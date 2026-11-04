@@ -323,13 +323,11 @@ def main() -> int:
     if decode.returncode:
         errors.append(f"decode failed: {decode.stderr.strip()[-500:]}")
 
-    reviewed = build / "quality_gate-reviewed" / "report.json"
-    base = build / "quality_gate" / "report.json"
-    report_path = reviewed if reviewed.is_file() else base
+    report_path = build / "quality_gate" / "report.json"
     gate: dict = {}
     notices: list[str] = []
     if not report_path.is_file():
-        errors.append(f"missing quality report: {reviewed} or {base}")
+        errors.append(f"missing quality report: {report_path}")
     else:
         try:
             gate = load_json(report_path)

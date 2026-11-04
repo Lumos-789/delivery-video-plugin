@@ -20,3 +20,11 @@
 - Feedback/defect report mode: `intent: "feedback"` plus an `issue` block adds severity
   and phase chips, a repro-steps overlay, and writes `feedback.json` and
   `feedback.generated.md` bound to the artifact SHA256. Quality-gate rules are unchanged.
+
+## 1.0.x (2026-10-31 → 2026-11-02)
+
+- 1.0.0 — first ZCode release: real-recording pipeline (`preflight`/`render`/`verify`), the built-in `delivery-v1` gate, bilingual READMEs.
+- 1.0.1 — narration/TTS, subtitle line-breaking and low-bitrate false-positive fixes; preflight checks render dependencies early.
+- 1.0.2 — default warnings cleaned up; auditable notices kept.
+- 1.0.3 / 1.0.4 — DSH runtime skill registration, then registration scoped to each Agent (plugin shell: `package.json` + `index.js` + `cordis.patch.yml`).
+- 1.0.5 / 1.0.6 — desktop-environment hardening; case-driven recording guidance.

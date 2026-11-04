@@ -32,6 +32,7 @@ LEAD = 0.15
 TAIL = 0.45
 PROFILE = "delivery-v1"
 SPEED_MIN, SPEED_MAX = 0.3, 3.0
+DEFAULT_CROP = [260, 64, 1340, 780]
 MAX_LINE = 24
 MIN_EDGE_TTS = (7, 3, 1)
 INTENTS = {"delivery", "feedback"}
@@ -392,7 +393,7 @@ def render_segment(segment: dict, mp3: Path, chars: list[dict], build: Path,
         raise RenderError(
             f"recording speed {speed:.2f}x outside {SPEED_MIN}x..{SPEED_MAX}x for "
             f"{segment['id']}: shorten the narration or widen the interval")
-    crop = segment.get("crop", [260, 64, 1340, 780])
+    crop = segment.get("crop", DEFAULT_CROP)
     x, y, width, height = crop
     vf = (f"crop={width}:{height}:{x}:{y},setpts={seconds / (end - start)}*(PTS-STARTPTS),"
           "scale=1800:866:force_original_aspect_ratio=decrease:flags=lanczos,"

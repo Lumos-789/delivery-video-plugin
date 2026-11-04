@@ -15,9 +15,10 @@ In DeepSeek Harness, the skill is registered in both the Host and each live Agen
    delivery: severity and phase chips, a repro-steps overlay, and both `feedback.json` and a
    ticket-ready `feedback.generated.md`. The gate report binds the artifact SHA256, a
    normalized hash of the `feedback.json` fields and the exact markdown bytes, so
-   `verify_delivery.py` fails when the report was edited after rendering or the markdown is
-   missing. The same quality gate applies.
-4. **Self-contained renderer** — `render.py` synthesizes narration via edge-tts (word-boundary clocks), times each segment to its narration (0.3x–3x speed clamp), draws the label chip and word-synced subtitles, concatenates, loudness-normalizes to −14 LUFS, and runs the built-in quality gate. Output: `screen_demo.mp4` (1920×1080, 30fps, h264+AAC), `timeline.json`, cover/preview frames, `quality_gate/report.json`.
+   `verify_delivery.py` fails when the report was edited after rendering, or the markdown is
+   missing or was edited after rendering. Copy `examples/feedback-episode.example.json` as a
+   starting point. The same quality gate applies.
+4. **Self-contained renderer** — `render.py` synthesizes narration via edge-tts (word-boundary clocks), times each segment to its narration (0.3x–3x speed is hard-checked, never clamped — out of range fails), draws the label chip and word-synced subtitles, concatenates, loudness-normalizes to −14 LUFS, and runs the built-in quality gate. Output: `screen_demo.mp4` (1920×1080, 30fps, h264 with AAC audio — a non-AAC track is a gate warning `E102`, not a failure), `timeline.json`, cover/preview frames, `quality_gate/report.json`.
 5. **Fail-loud checks** — `preflight.py` validates the recipe before rendering (structure, intervals, crops, browser-recording evidence, TTS cache contracts, narration red lines); `verify_delivery.py` verifies the finished artifact, gate binding and optional independent visual review afterwards.
 6. **Attachment gate** — `render.py gate` runs the same hard checks on any mp4 before it goes into a ticket, chat or customer channel.
 
