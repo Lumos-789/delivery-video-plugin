@@ -186,6 +186,15 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def feedback_content_sha256(feedback: dict) -> str:
+    """Hash the normalized report fields, independent of JSON formatting."""
+    import hashlib
+    canonical = json.dumps(
+        feedback, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
+
+
 def check_tools() -> None:
     missing = [name for name in ("ffmpeg", "ffprobe") if shutil.which(name) is None]
     if missing:
@@ -727,6 +736,27 @@ def write_feedback_markdown(build: Path, issue: dict, segments: list[dict],
     return path
 
 
+def feedback_binding(feedback: dict, markdown_path: Path) -> dict:
+    return {
+        "report": "feedback.json",
+        "sha256": feedback_content_sha256(feedback),
+        "markdown": markdown_path.name,
+        "markdown_sha256": sha256(markdown_path),
+    }
+
+
+def bind_feedback_evidence(report_path: Path, report: dict, feedback_path: Path,
+                           markdown_path: Path) -> dict:
+    feedback = json.loads(feedback_path.read_text(encoding="utf-8"))
+    binding = feedback_binding(feedback, markdown_path)
+    report["feedback"] = binding
+    report_path.write_text(
+        json.dumps(report, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    return binding
+
+
 def cmd_render(build: Path) -> int:
     check_tools()
     check_edge_tts_version()
@@ -798,9 +828,19 @@ def cmd_render(build: Path) -> int:
     )
     report = quality_gate(final, build / "quality_gate")
     if feedback is not None:
-        report_path = write_feedback_report(build, feedback, segments, report)
+        feedback_report_path = write_feedback_report(build, feedback, segments, report)
         markdown_path = write_feedback_markdown(build, feedback, segments, timeline, report)
-        print(f"FEEDBACK {report_path} {markdown_path}", flush=True)
+        binding = bind_feedback_evidence(
+            build / "quality_gate" / "report.json",
+            report,
+            feedback_report_path,
+            markdown_path,
+        )
+        print(
+            f"FEEDBACK {feedback_report_path} {markdown_path} "
+            f"sha256={binding['sha256']} markdown_sha256={binding['markdown_sha256']}",
+            flush=True,
+        )
     print(f"COMPLETE {final} duration={duration(final):.3f}s "
           f"gate={report['status']} score={report['score']['total']}", flush=True)
     for notice in report["notices"]:
