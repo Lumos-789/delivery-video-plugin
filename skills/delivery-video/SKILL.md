@@ -202,7 +202,7 @@ Rules:
 - The severity becomes the first on-screen chip and the phase the second, so a viewer can tell repro from symptom without narration.
 - During `phase: "repro"` segments the renderer overlays the first five `issue.repro` steps in the top-right. Keep steps short; the full list stays in the generated report.
 - A feedback video reports what the current build does. Do not mix in footage from an older build, do not claim a fix, and do not hide a passing case to make the defect look worse.
-- `render.py` writes `feedback.json` (issue, segment phases, artifact SHA256) and `feedback.generated.md` — a ticket-ready draft with expected/actual, numbered repro steps, per-segment source ranges and the gate result. `verify_delivery.py` fails a feedback episode whose JSON report is missing or bound to another file.
+- `render.py` writes `feedback.json` (issue, segment phases, artifact SHA256) and `feedback.generated.md` — a ticket-ready draft with expected/actual, numbered repro steps, per-segment source ranges and the gate result. The gate report also binds a normalized hash of `feedback.json` and the exact markdown bytes; `verify_delivery.py` fails a feedback episode whose JSON report is missing or bound to another file, whose report content was edited after rendering, or whose markdown is missing or edited.
 - `feedback.generated.md` is overwritten on every render. Treat it as the source for the ticket; add impact and business context in a separate note or edit a copy, do not hand-edit the generated file.
 
 ## Common shapes

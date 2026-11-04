@@ -39,7 +39,9 @@
 
 At least one segment must use `phase: "actual"`. `render.py` writes `feedback.json` with the
 issue, the segment phases and the artifact SHA256; `verify_delivery.py` treats a missing or
-misbound report as a failure. Delivery episodes without `intent` keep the original contract.
+misbound report as a failure, and the gate report binds a normalized hash of the report fields
+plus the exact `feedback.generated.md` bytes, so editing either file after rendering fails the
+gate. Delivery episodes without `intent` keep the original contract.
 
 During `phase: "repro"` segments the renderer also draws the first five `issue.repro` steps in
 the top-right corner; the full list stays in the generated markdown. A `phase` on a delivery
@@ -49,8 +51,8 @@ episode is rejected, so the two modes cannot be mixed by accident.
 
 | File | Contents |
 | --- | --- |
-| `feedback.json` | machine-readable issue, segment phases and artifact SHA256; bound to the gate report |
-| `feedback.generated.md` | ticket-ready draft: expected/actual, numbered repro steps, per-segment in-video timing and source range, artifact hash and gate result |
+| `feedback.json` | machine-readable issue, segment phases and artifact SHA256; the gate report binds its normalized content hash |
+| `feedback.generated.md` | ticket-ready draft: expected/actual, numbered repro steps, per-segment in-video timing and source range, artifact hash and gate result; the gate report binds its exact byte hash |
 
 `feedback.generated.md` is rewritten on every render — edit a copy or keep additions in a
 separate note. The draft deliberately does not claim a fix, a root cause or coverage of other

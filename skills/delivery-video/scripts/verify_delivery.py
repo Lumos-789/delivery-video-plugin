@@ -15,7 +15,11 @@ import hashlib
 import json
 import shutil
 import subprocess
+import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from render import feedback_content_sha256  # noqa: E402
 
 
 class CheckError(Exception):
@@ -184,6 +188,70 @@ def check_shot_evidence(build: Path, errors: list[str], warnings: list[str]) -> 
     return checked
 
 
+def check_feedback_report(build: Path, digest: str, gate: dict) -> list[str]:
+    """Check feedback.json and feedback.generated.md against the gate binding."""
+    errors: list[str] = []
+    feedback_path = build / "feedback.json"
+    if not feedback_path.is_file():
+        return [f"feedback episode is missing {feedback_path.name}"]
+    try:
+        feedback = load_json(feedback_path)
+    except CheckError as exc:
+        return [str(exc)]
+    if not isinstance(feedback, dict):
+        return [f"feedback report must be an object: {feedback_path}"]
+    if (feedback.get("artifact") or {}).get("sha256") != digest:
+        errors.append("feedback report is not bound to this artifact (sha256 mismatch)")
+    if (feedback.get("gate") or {}).get("status") != "pass":
+        errors.append("feedback report gate status is not 'pass'")
+    phases = [
+        item.get("phase")
+        for item in (feedback.get("segments") or [])
+        if isinstance(item, dict)
+    ]
+    if "actual" not in phases:
+        errors.append("feedback report has no 'actual' segment")
+
+    binding = gate.get("feedback") if isinstance(gate, dict) else None
+    has_binding = isinstance(binding, dict) and bool(binding)
+    if not has_binding:
+        errors.append(
+            "quality report has no feedback report binding "
+            "(quality_gate/report.json.feedback is missing); re-render the feedback episode"
+        )
+        binding = {}
+    if binding.get("report") not in (None, feedback_path.name):
+        errors.append(
+            "quality report feedback binding points at "
+            f"{binding.get('report')!r}, expected {feedback_path.name!r}"
+        )
+    markdown_name = binding.get("markdown")
+    if not isinstance(markdown_name, str) or not markdown_name:
+        markdown_name = "feedback.generated.md"
+    markdown_path = (build / markdown_name).resolve()
+    try:
+        markdown_path.relative_to(build)
+    except ValueError:
+        errors.append(
+            "feedback markdown path resolves outside the build directory: "
+            f"{markdown_name}"
+        )
+        markdown_path = build / "feedback.generated.md"
+    if not markdown_path.is_file():
+        errors.append(f"feedback markdown is missing: {markdown_path.name}")
+    elif has_binding and binding.get("markdown_sha256") != sha256(markdown_path):
+        errors.append(
+            "feedback markdown was edited after rendering "
+            f"({markdown_path.name} sha256 mismatch)"
+        )
+    if has_binding and binding.get("sha256") != feedback_content_sha256(feedback):
+        errors.append(
+            "feedback report content was edited after rendering "
+            "(feedback.json sha256 mismatch); re-render or restore feedback.json"
+        )
+    return errors
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("build", type=Path, help="screen_demo[-<slug>] build directory")
@@ -304,31 +372,7 @@ def main() -> int:
             errors.append(str(exc))
             episode = {}
         if isinstance(episode, dict) and episode.get("intent") == "feedback":
-            feedback_path = build / "feedback.json"
-            if not feedback_path.is_file():
-                errors.append(f"feedback episode is missing {feedback_path.name}")
-            else:
-                try:
-                    feedback = load_json(feedback_path)
-                except CheckError as exc:
-                    errors.append(str(exc))
-                    feedback = {}
-                if not isinstance(feedback, dict):
-                    errors.append(f"feedback report must be an object: {feedback_path}")
-                else:
-                    if (feedback.get("artifact") or {}).get("sha256") != digest:
-                        errors.append(
-                            "feedback report is not bound to this artifact (sha256 mismatch)"
-                        )
-                    if (feedback.get("gate") or {}).get("status") != "pass":
-                        errors.append("feedback report gate status is not 'pass'")
-                    phases = [
-                        item.get("phase")
-                        for item in (feedback.get("segments") or [])
-                        if isinstance(item, dict)
-                    ]
-                    if "actual" not in phases:
-                        errors.append("feedback report has no 'actual' segment")
+            errors.extend(check_feedback_report(build, digest, gate))
     if critic_path.is_file():
         try:
             critic = load_json(critic_path)
