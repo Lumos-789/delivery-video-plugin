@@ -1,7 +1,7 @@
 {
   "name": "delivery-video",
-  "version": "1.0.6",
-  "description": "Turn a feature that actually runs into a trustworthy delivery demo video: real screen recordings, edge-tts narration, word-synced subtitles and a deterministic quality gate (ffmpeg-based, self-contained pipeline).",
+  "version": "1.1.1",
+  "description": "Turn a feature that actually runs into a trustworthy delivery demo video, or a defect into a traceable feedback video: real screen recordings, edge-tts narration, word-synced subtitles and a deterministic quality gate (ffmpeg-based, self-contained pipeline).",
   "type": "module",
   "main": "index.js",
   "scripts": {
@@ -42,6 +42,7 @@
     "dsh-plugin",
     "delivery",
     "demo-video",
+    "bug-report",
     "screen-recording",
     "quality-gate",
     "edge-tts",

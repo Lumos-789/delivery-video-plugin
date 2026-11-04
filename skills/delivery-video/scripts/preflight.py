@@ -39,6 +39,7 @@ from render import (  # noqa: E402
     INTERNAL_TERMS,
     RenderError,
     check_edge_tts_version,
+    feedback_errors,
     font_path,
 )
 
@@ -478,6 +479,7 @@ def main() -> int:
                          tts_voice, tts_rate, errors):
                 tts_missing.append(prefix)
 
+    errors.extend(feedback_errors(episode, segments))
     if texts:
         check_redline(texts, errors, warnings)
     if tts_missing:

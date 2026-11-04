@@ -11,6 +11,10 @@ In DeepSeek Harness, the skill is registered in both the Host and each live Agen
 1. **Verify first, record second** — the workflow requires evidence that the current version really runs (git SHA, tickets, request IDs) before any recording.
 2. **Case-driven structure (recommended)** — for multi-case deliveries the skill suggests listing the acceptance cases first, recording one real run per case, then assembling segments in execution order with a result shot per case. Optional, not a gate.
 3. **episode.json recipe** — each segment binds one real take + time range + one narration line + optional crop/case chip.
+   Set `intent: "feedback"` with an `issue` block to produce a defect report instead of a
+   delivery: severity and phase chips, a repro-steps overlay, and both `feedback.json` and a
+   ticket-ready `feedback.generated.md` bound to the artifact SHA256. The same quality gate
+   applies.
 4. **Self-contained renderer** — `render.py` synthesizes narration via edge-tts (word-boundary clocks), times each segment to its narration (0.3x–3x speed clamp), draws the label chip and word-synced subtitles, concatenates, loudness-normalizes to −14 LUFS, and runs the built-in quality gate. Output: `screen_demo.mp4` (1920×1080, 30fps, h264+AAC), `timeline.json`, cover/preview frames, `quality_gate/report.json`.
 5. **Fail-loud checks** — `preflight.py` validates the recipe before rendering (structure, intervals, crops, browser-recording evidence, TTS cache contracts, narration red lines); `verify_delivery.py` verifies the finished artifact, gate binding and optional independent visual review afterwards.
 6. **Attachment gate** — `render.py gate` runs the same hard checks on any mp4 before it goes into a ticket, chat or customer channel.

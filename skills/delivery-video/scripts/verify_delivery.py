@@ -296,6 +296,39 @@ def main() -> int:
             "quality report is not bound to this artifact "
             "(video_sha256 missing or mismatched); rerun the gate"
         )
+    episode_path = build / "episode.json"
+    if episode_path.is_file():
+        try:
+            episode = load_json(episode_path)
+        except CheckError as exc:
+            errors.append(str(exc))
+            episode = {}
+        if isinstance(episode, dict) and episode.get("intent") == "feedback":
+            feedback_path = build / "feedback.json"
+            if not feedback_path.is_file():
+                errors.append(f"feedback episode is missing {feedback_path.name}")
+            else:
+                try:
+                    feedback = load_json(feedback_path)
+                except CheckError as exc:
+                    errors.append(str(exc))
+                    feedback = {}
+                if not isinstance(feedback, dict):
+                    errors.append(f"feedback report must be an object: {feedback_path}")
+                else:
+                    if (feedback.get("artifact") or {}).get("sha256") != digest:
+                        errors.append(
+                            "feedback report is not bound to this artifact (sha256 mismatch)"
+                        )
+                    if (feedback.get("gate") or {}).get("status") != "pass":
+                        errors.append("feedback report gate status is not 'pass'")
+                    phases = [
+                        item.get("phase")
+                        for item in (feedback.get("segments") or [])
+                        if isinstance(item, dict)
+                    ]
+                    if "actual" not in phases:
+                        errors.append("feedback report has no 'actual' segment")
     if critic_path.is_file():
         try:
             critic = load_json(critic_path)
