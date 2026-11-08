@@ -102,6 +102,7 @@ Build directory: `build/screen_demo-<slug>/`. Full field reference: [references/
   "voice": "zh-CN-YunxiNeural",
   "rate": "+5%",
   "title": "Feature delivery demo",
+  "layout": "fullbleed",
   "segments": [
     {
       "id": "01-entry",
@@ -110,16 +111,17 @@ Build directory: `build/screen_demo-<slug>/`. Full field reference: [references/
       "shot": "take-01.mp4",
       "start": 0.5,
       "end": 11.5,
-      "crop": [56, 159, 1512, 738],
       "text": "Open the order detail page; the task list and the save action are both here."
     }
   ]
 }
 ```
 
-`shot` is relative to the build directory; `start`/`end` select the range inside that same take; `crop` is `[x, y, w, h]` in source pixels. Speed is hard-checked, not clamped: outside 0.3x–3x both preflight and render fail instead of adjusting the speed, so if narration does not fit, split the segment or cut information — never force it.
+`shot` is relative to the build directory; `start`/`end` select the range inside that same take. Frame geometry is opt-in: without `crop` the whole recording is shown (`layout` defaults to `banded`; `fullbleed` scales the recording 1:1 onto the canvas). Only declare `crop` (`[x, y, w, h]` source pixels, bounds-checked) when the frame must genuinely exclude something — a silent default that trims edges on its own was the bug class this replaced, so never re-introduce one. Speed is hard-checked, not clamped: outside 0.3x–3x both preflight and render fail instead of adjusting the speed, so if narration does not fit, split the segment or cut information — never force it.
 
 When several acceptance cases share one video, give every segment the `case` id of the run it came from and keep the case order the same as the execution order. The field stays optional; it becomes the on-screen chip and makes it easy to confirm that each case has its own result segment.
+
+Narration polyphones: preflight warns on chars whose Mandarin reading depends on context (行 重 还 都 长 得 着 差 数 干 应 结 系 弹 屏). The classic offender is 行 — a table row (háng) often reads as xíng; write 一条/这一单 instead. Resolve every warning by rewriting or by listening to the segment audio; never ship a narration you have not heard.
 
 Run the preflight before rendering:
 
@@ -127,7 +129,7 @@ Run the preflight before rendering:
 python3 <skill>/scripts/preflight.py build/screen_demo-<slug>
 ```
 
-It checks JSON structure, recordings, intervals, crops, evidence files, cached-TTS contracts and narration red lines. FIX the material on FAIL; do not bring problems to the renderer.
+It checks JSON structure, recordings, intervals, crops, evidence files, cached-TTS contracts, narration red lines and polyphone warnings. FIX the material on FAIL; do not bring problems to the renderer.
 
 ### 6. Render
 

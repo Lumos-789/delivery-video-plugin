@@ -1,5 +1,27 @@
 # Changelog
 
+## 1.2.0
+
+- **Root-caused the "only the middle of the screen is recorded" failure.** `render.py`
+  used to apply a hard-coded `DEFAULT_CROP = [260, 64, 1340, 780]` to every segment
+  that did not declare `crop`, silently trimming 260 px off the left and 320 px off the
+  right of any full-window 1920x1080 recording (and `preflight.py` validated browser
+  takes against the same silent default while demo-stage takes were validated as full
+  frame — the two defaults even disagreed). Frame geometry is now opt-in everywhere:
+  `crop` absent = the whole recording is shown; an explicit crop is bounds-checked
+  against the real source pixels in both preflight and render and fails loud.
+- New episode-level `layout` field: `banded` (default, unchanged dark-canvas look with
+  the 1800x866 content box) or `fullbleed` (recording scaled onto the full 1920x1080
+  canvas; 16:9 sources map 1:1; case chip stays top-left and subtitles get a dark
+  backing box so they stay readable over light pages). Use `fullbleed` when every
+  pixel of the screen must stay visible.
+- Polyphone lint in `preflight.py`: narration containing 行/重/还/都/长/得/着/差/数/干/应/结/系/弹/屏
+  produces a per-occurrence warning with context (e.g. table-row 行 háng vs walking 行
+  xíng — prefer 一条/这一单), so TTS mispronunciations are caught before render instead
+  of after delivery.
+- Tests: `tests/test_render.py` covers full-frame default, explicit-crop placement and
+  fullbleed geometry.
+
 ## 1.1.2
 
 - Feedback reports are now fully bound to the evidence chain. `render.py` writes the

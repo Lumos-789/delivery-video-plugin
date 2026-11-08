@@ -26,15 +26,35 @@ SEGMENT_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
 RATE = re.compile(r"^[+-]\d+%$")
 EVIDENCE_KINDS = {"cdp-screencast", "browser-demo"}
 DEMO_STAGE_KIND = "demo-stage-recording"
-DEMO_STAGE_CROP = [0, 0, 1920, 1080]
 ALLOWED_SOURCES = {"browser", "window", "demo-stage"}
+
+# Chars whose TTS reading depends on context and regularly comes out wrong in
+# Mandarin narration (e.g. 行 háng "table row" vs xíng "walk"). Every hit is a
+# warning with context: confirm the reading or rewrite to an unambiguous word.
+POLYPHONES = {
+    "行": "háng 表格行 / xíng 行走——表格「一行」建议改用「一条」",
+    "重": "zhòng 重量 / chóng 重新、重复",
+    "还": "hái 还有 / huán 归还",
+    "都": "dōu 都是 / dū 首都",
+    "长": "cháng 长度 / zhǎng 增长",
+    "得": "dé 得到 / de 跑得快 / děi 得去",
+    "着": "zhe 看着 / zháo 着急 / zhuó 着重",
+    "差": "chà 差一点 / chā 差别 / chāi 出差",
+    "数": "shù 数量 / shǔ 数一数",
+    "干": "gàn 干活 / gān 干净",
+    "应": "yīng 应该 / yìng 响应",
+    "结": "jié 结果 / jiē 结实",
+    "系": "xì 系统 / jì 系鞋带",
+    "弹": "tán 弹出 / dàn 子弹",
+    "屏": "píng 屏幕 / bǐng 屏息",
+}
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from render import (  # noqa: E402
     AI_CLICHE_PATTERNS,
-    DEFAULT_CROP,
     FPS,
     INTERNAL_TERMS,
+    LAYOUTS,
     LEAD as LEAD_S,
     RenderError,
     SPEED_MAX,
@@ -255,9 +275,9 @@ def check_evidence_size(prefix: str, evidence: dict | None, width: int, height: 
 
 
 def check_crop(segment_id: str, crop: object, width: int, height: int,
-               errors: list[str], default: list[int] | None = None) -> None:
+               errors: list[str]) -> None:
     if crop is None:
-        crop = default or DEFAULT_CROP
+        return
     if (not isinstance(crop, list) or len(crop) != 4
             or not all(isinstance(v, int) and not isinstance(v, bool) for v in crop)):
         errors.append(f"{segment_id}: crop must be [x, y, w, h] integers")
@@ -329,6 +349,22 @@ def check_redline(texts: list[str], errors: list[str], warnings: list[str]) -> N
                 )
 
 
+def check_polyphones(texts: list[str], warnings: list[str]) -> None:
+    for index, text in enumerate(texts, 1):
+        for char, hint in POLYPHONES.items():
+            pos = 0
+            while True:
+                pos = text.find(char, pos)
+                if pos < 0:
+                    break
+                context = text[max(0, pos - 8):pos + 9]
+                warnings.append(
+                    f"narration {index}: polyphone '{char}' in …{context}… ({hint}); "
+                    "confirm the TTS reading or rewrite to the unambiguous word"
+                )
+                pos += 1
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("build", type=Path, help="screen_demo[-<slug>] build directory")
@@ -382,6 +418,9 @@ def main() -> int:
         errors.append("voice must be a non-empty string")
     if not rate_ok:
         errors.append(f"rate must look like +5% or -10%, got {rate_value!r}")
+    layout_value = episode.get("layout", "banded")
+    if layout_value not in LAYOUTS:
+        errors.append(f"layout must be one of {sorted(LAYOUTS)}, got {layout_value!r}")
 
     segments = episode.get("segments")
     if not isinstance(segments, list) or not segments:
@@ -469,10 +508,7 @@ def main() -> int:
                 f"{prefix}: interval ends at {end:.2f}s beyond source duration {duration:.2f}s"
             )
             continue
-        check_crop(
-            prefix, segment.get("crop"), width, height, errors,
-            default=DEMO_STAGE_CROP if source_kind == "demo-stage" else None,
-        )
+        check_crop(prefix, segment.get("crop"), width, height, errors)
         print(
             f"OK {prefix}: {shot} {start:.2f}-{end:.2f}s "
             f"source={width}x{height} duration={duration:.2f}s"
@@ -485,6 +521,7 @@ def main() -> int:
     errors.extend(feedback_errors(episode, segments))
     if texts:
         check_redline(texts, errors, warnings)
+        check_polyphones(texts, warnings)
     if tts_missing:
         warnings.append(
             f"{len(tts_missing)} segment(s) have no cached TTS; speed range not checked: "

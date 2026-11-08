@@ -32,7 +32,11 @@ LEAD = 0.15
 TAIL = 0.45
 PROFILE = "delivery-v1"
 SPEED_MIN, SPEED_MAX = 0.3, 3.0
-DEFAULT_CROP = [260, 64, 1340, 780]
+# Frame geometry is never a silent default: recordings are shown in full
+# unless a segment declares an explicit crop. "banded" keeps the classic
+# dark-canvas look (content box above the subtitle band); "fullbleed" scales
+# the recording 1:1 onto the canvas and overlays labels/subtitles on it.
+LAYOUTS = ("banded", "fullbleed")
 MAX_LINE = 24
 MIN_EDGE_TTS = (7, 3, 1)
 INTENTS = {"delivery", "feedback"}
@@ -171,6 +175,58 @@ def run(args: list[str]) -> str:
 def duration(path: Path) -> float:
     return float(run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
                       "-of", "csv=p=0", str(path)]).strip())
+
+
+_SIZE_CACHE: dict = {}
+
+
+def video_size(path: Path) -> tuple[int, int]:
+    key = str(path)
+    if key not in _SIZE_CACHE:
+        info = probe_json(path)
+        stream = next((s for s in info.get("streams") or []
+                       if s.get("codec_type") == "video"), None)
+        if stream is None:
+            raise RenderError(f"no video stream in {path}")
+        _SIZE_CACHE[key] = (int(stream["width"]), int(stream["height"]))
+    return _SIZE_CACHE[key]
+
+
+def segment_filter(crop: list[int] | None, layout: str, speed: float,
+                   seconds: float) -> str:
+    """Per-segment ffmpeg vf chain.
+
+    crop=None shows the whole recording — frame geometry is opt-in only, so a
+    missing crop can never silently hide screen edges again. "banded" fits the
+    frame into the 1800x866 content box above the subtitle band; "fullbleed"
+    fits it onto the full 1920x1080 canvas (16:9 sources map 1:1).
+    """
+    parts = []
+    if crop is not None:
+        x, y, w, h = crop
+        parts.append(f"crop={w}:{h}:{x}:{y}")
+    if layout == "fullbleed":
+        box, pad = f"scale={W}:{H}", f"pad={W}:{H}:(ow-iw)/2:(oh-ih)/2"
+    else:
+        box, pad = "scale=1800:866", f"pad={W}:{H}:(ow-iw)/2:66"
+    parts.append(
+        f"setpts={speed}*(PTS-STARTPTS),{box}:force_original_aspect_ratio=decrease"
+        f":flags=lanczos,eq=brightness=-0.035,{pad}:color=0x10182b")
+    parts.append(f"fps={FPS},tpad=stop_mode=clone:stop_duration={seconds}")
+    return ",".join(parts)
+
+
+def check_crop_bounds(segment_id: str, crop: object, src: Path) -> list[int]:
+    """Validate an explicitly declared crop against the real source pixels."""
+    if (not isinstance(crop, list) or len(crop) != 4
+            or not all(isinstance(v, int) and not isinstance(v, bool) for v in crop)):
+        raise RenderError(f"{segment_id}: crop must be [x, y, w, h] integers")
+    src_w, src_h = video_size(src)
+    x, y, w, h = crop
+    if x < 0 or y < 0 or w <= 0 or h <= 0 or x + w > src_w or y + h > src_h:
+        raise RenderError(
+            f"{segment_id}: crop {crop} exceeds source {src_w}x{src_h}")
+    return crop
 
 
 def probe_json(path: Path) -> dict:
@@ -378,7 +434,7 @@ def group_lines(chars: list[dict], max_line: int = MAX_LINE) -> list[list[dict]]
 
 
 def render_segment(segment: dict, mp3: Path, chars: list[dict], build: Path,
-                   feedback: dict | None = None):
+                   feedback: dict | None = None, layout: str = "banded"):
     from PIL import Image, ImageDraw
     src = build / segment["shot"]
     if not src.is_file():
@@ -393,12 +449,10 @@ def render_segment(segment: dict, mp3: Path, chars: list[dict], build: Path,
         raise RenderError(
             f"recording speed {speed:.2f}x outside {SPEED_MIN}x..{SPEED_MAX}x for "
             f"{segment['id']}: shorten the narration or widen the interval")
-    crop = segment.get("crop", DEFAULT_CROP)
-    x, y, width, height = crop
-    vf = (f"crop={width}:{height}:{x}:{y},setpts={seconds / (end - start)}*(PTS-STARTPTS),"
-          "scale=1800:866:force_original_aspect_ratio=decrease:flags=lanczos,"
-          "eq=brightness=-0.035,pad=1920:1080:(ow-iw)/2:66:color=0x10182b,"
-          f"fps={FPS},tpad=stop_mode=clone:stop_duration={seconds}")
+    crop = segment.get("crop")
+    if crop is not None:
+        crop = check_crop_bounds(segment["id"], crop, src)
+    vf = segment_filter(crop, layout, seconds / (end - start), seconds)
     decode = subprocess.Popen(
         ["ffmpeg", "-v", "error", "-ss", str(start), "-t", str(end - start),
          "-i", str(src), "-vf", vf, "-frames:v", str(frames),
@@ -448,6 +502,11 @@ def render_segment(segment: dict, mp3: Path, chars: list[dict], build: Path,
             index = bisect.bisect_right(starts, t) - 1
             if index >= 0 and t <= lines[index][-1]["end_ms"] + 180:
                 text = "".join(c["char"] for c in lines[index])
+                if layout == "fullbleed":
+                    tw = draw.textlength(text, font=font)
+                    draw.rounded_rectangle(
+                        ((W - tw) / 2 - 26, 1008 - 34, (W + tw) / 2 + 26, 1008 + 34),
+                        radius=12, fill=(16, 24, 43))
                 draw.text((W / 2, 1008), text, font=font, fill="white", anchor="mm")
             encode.stdin.write(frame.tobytes())
     finally:
@@ -774,6 +833,9 @@ def cmd_render(build: Path) -> int:
     if rule_errors:
         raise RenderError("; ".join(rule_errors))
     feedback = episode.get("issue") if episode.get("intent") == "feedback" else None
+    layout = episode.get("layout", "banded")
+    if layout not in LAYOUTS:
+        raise RenderError(f"episode layout must be one of {LAYOUTS}, got {layout!r}")
     for key in ("voice",):
         if not episode.get(key):
             raise RenderError(f"episode.json missing required field: {key}")
@@ -789,7 +851,7 @@ def cmd_render(build: Path) -> int:
     for segment in segments:
         mp3, chars = asyncio.run(
             synth(segment, episode["voice"], episode.get("rate", "+5%"), build))
-        clip, seconds = render_segment(segment, mp3, chars, build, feedback)
+        clip, seconds = render_segment(segment, mp3, chars, build, feedback, layout)
         tracks.append(clip)
         timeline.append({"id": segment["id"], "start": round(offset, 3),
                          "end": round(offset + seconds, 3), "source": segment["shot"],

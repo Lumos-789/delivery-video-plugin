@@ -20,8 +20,9 @@
 | `segments[].start` | yes | range start in the source, seconds |
 | `segments[].end` | yes | range end, must exceed start |
 | `segments[].source` | no | `browser` requires `<shot-stem>.evidence.json`; `demo-stage` requires headless-stage evidence; window recordings may say `window` or omit |
-| `segments[].crop` | no | `[x, y, w, h]` in source pixels. Default `[260, 64, 1340, 780]` for window/browser takes; preflight treats `source: "demo-stage"` takes as the full frame `[0, 0, 1920, 1080]` (the headless stage is captured full-frame) |
+| `segments[].crop` | no | `[x, y, w, h]` in source pixels. Absent = the full frame is shown (recommended for window/browser takes); an explicit crop is bounds-checked against the real source pixels and fails loud. Never rely on a silent default to hide sensitive regions — crop on purpose or cut the take |
 | `segments[].text` | yes | one continuous narration line, no newlines; subtitles auto-break at punctuation |
+| `layout` | no | episode-level, `banded` (default; content box above a dark subtitle band) or `fullbleed` (recording scaled 1:1 onto the 1920x1080 canvas, case chip and subtitles overlaid with a backing box). Use `fullbleed` when every pixel of the screen must be visible |
 
 ### Feedback issues
 

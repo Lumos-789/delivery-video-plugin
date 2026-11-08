@@ -196,5 +196,22 @@ class FeedbackTests(unittest.TestCase):
         )
 
 
+class SegmentFilterTests(unittest.TestCase):
+    def test_missing_crop_is_full_frame(self):
+        vf = render.segment_filter(None, "banded", 1.0, 5.0)
+        self.assertNotIn("crop=", vf)
+        self.assertIn("scale=1800:866", vf)
+
+    def test_explicit_crop_comes_first(self):
+        vf = render.segment_filter([10, 20, 300, 200], "banded", 1.0, 5.0)
+        self.assertTrue(vf.startswith("crop=300:200:10:20,"))
+
+    def test_fullbleed_fits_whole_canvas(self):
+        vf = render.segment_filter(None, "fullbleed", 1.0, 5.0)
+        self.assertNotIn("crop=", vf)
+        self.assertIn("scale=1920:1080", vf)
+        self.assertIn("pad=1920:1080:(ow-iw)/2:(oh-ih)/2", vf)
+
+
 if __name__ == "__main__":
     unittest.main()
