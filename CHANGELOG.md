@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.2.1
+
+- Docs fix: `references/recording.md` still claimed "the renderer crops to a 1080p
+  canvas" — the opposite of the 1.2.0 fix. It now says recordings are scaled/padded
+  onto the 1080p canvas and the full frame is shown unless a segment declares an
+  explicit `crop`, matching SKILL.md and `episode-and-review.md`.
+- `render.py` and `preflight.py` no longer duplicate the crop validation: one shared
+  `crop_error()` (in `render.py`) is collected by preflight and raised by render.
+  Both entry points reject exactly the same inputs as before; render's message for a
+  negative-origin or non-positive crop now names that problem instead of the old
+  "exceeds source".
+- Comment cleanup: dropped the `LAYOUTS` block comment duplicated by
+  `segment_filter`'s docstring, the behavior-restating half of the polyphone comment,
+  and a divider comment.
+
 ## 1.2.0
 
 - **Root-caused the "only the middle of the screen is recorded" failure.** `render.py`

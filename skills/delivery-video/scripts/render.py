@@ -32,10 +32,6 @@ LEAD = 0.15
 TAIL = 0.45
 PROFILE = "delivery-v1"
 SPEED_MIN, SPEED_MAX = 0.3, 3.0
-# Frame geometry is never a silent default: recordings are shown in full
-# unless a segment declares an explicit crop. "banded" keeps the classic
-# dark-canvas look (content box above the subtitle band); "fullbleed" scales
-# the recording 1:1 onto the canvas and overlays labels/subtitles on it.
 LAYOUTS = ("banded", "fullbleed")
 MAX_LINE = 24
 MIN_EDGE_TTS = (7, 3, 1)
@@ -216,16 +212,25 @@ def segment_filter(crop: list[int] | None, layout: str, speed: float,
     return ",".join(parts)
 
 
-def check_crop_bounds(segment_id: str, crop: object, src: Path) -> list[int]:
-    """Validate an explicitly declared crop against the real source pixels."""
+def crop_error(segment_id: str, crop: object, src_w: int, src_h: int) -> str | None:
+    """Single source of crop validation, shared with preflight."""
     if (not isinstance(crop, list) or len(crop) != 4
             or not all(isinstance(v, int) and not isinstance(v, bool) for v in crop)):
-        raise RenderError(f"{segment_id}: crop must be [x, y, w, h] integers")
-    src_w, src_h = video_size(src)
+        return f"{segment_id}: crop must be [x, y, w, h] integers"
     x, y, w, h = crop
-    if x < 0 or y < 0 or w <= 0 or h <= 0 or x + w > src_w or y + h > src_h:
-        raise RenderError(
-            f"{segment_id}: crop {crop} exceeds source {src_w}x{src_h}")
+    if x < 0 or y < 0 or w <= 0 or h <= 0:
+        return f"{segment_id}: crop has non-positive size or negative origin {crop}"
+    if x + w > src_w or y + h > src_h:
+        return f"{segment_id}: crop {crop} exceeds source {src_w}x{src_h}"
+    return None
+
+
+def check_crop_bounds(segment_id: str, crop: object, src: Path) -> list[int]:
+    """Validate an explicitly declared crop against the real source pixels."""
+    src_w, src_h = video_size(src)
+    error = crop_error(segment_id, crop, src_w, src_h)
+    if error:
+        raise RenderError(error)
     return crop
 
 
@@ -561,8 +566,6 @@ def loudnorm_finalize(raw: Path, final: Path) -> None:
     run(["ffmpeg", "-y", "-i", str(raw), "-af", af, "-ar", "44100", "-ac", "2",
          "-c:a", "aac", "-b:a", "192k", "-c:v", "copy", str(final)])
 
-
-# ---------------------------------------------------------------- quality gate
 
 def parse_detects(log: str, key: str) -> list[dict]:
     """Parse ffmpeg silencedetect/blackdetect/freezedetect key=value lines."""

@@ -4,7 +4,7 @@ The skill renders whatever recordings you point `episode.json` at. This page cov
 
 ## What a good take looks like
 
-- 1920x1080 or larger, landscape; the renderer crops to a 1080p canvas.
+- 1920x1080 or larger, landscape; the renderer scales/pads the take onto a 1080p canvas — the full frame is shown unless a segment declares an explicit crop.
 - Steady 30fps or higher; avoid variable-frame-rate phone-mirror captures when possible.
 - The whole interaction in one continuous take: entry → action → result read-back.
 - No notifications, no unrelated windows, no personal data in frame.

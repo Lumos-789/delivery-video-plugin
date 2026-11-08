@@ -28,9 +28,7 @@ EVIDENCE_KINDS = {"cdp-screencast", "browser-demo"}
 DEMO_STAGE_KIND = "demo-stage-recording"
 ALLOWED_SOURCES = {"browser", "window", "demo-stage"}
 
-# Chars whose TTS reading depends on context and regularly comes out wrong in
-# Mandarin narration (e.g. 行 háng "table row" vs xíng "walk"). Every hit is a
-# warning with context: confirm the reading or rewrite to an unambiguous word.
+# TTS reading of these chars depends on context (e.g. 行 háng/xíng): confirm each hit or rewrite
 POLYPHONES = {
     "行": "háng 表格行 / xíng 行走——表格「一行」建议改用「一条」",
     "重": "zhòng 重量 / chóng 重新、重复",
@@ -61,6 +59,7 @@ from render import (  # noqa: E402
     SPEED_MIN,
     TAIL as TAIL_S,
     check_edge_tts_version,
+    crop_error,
     feedback_errors,
     font_path,
 )
@@ -278,17 +277,9 @@ def check_crop(segment_id: str, crop: object, width: int, height: int,
                errors: list[str]) -> None:
     if crop is None:
         return
-    if (not isinstance(crop, list) or len(crop) != 4
-            or not all(isinstance(v, int) and not isinstance(v, bool) for v in crop)):
-        errors.append(f"{segment_id}: crop must be [x, y, w, h] integers")
-        return
-    x, y, w, h = crop
-    if x < 0 or y < 0 or w <= 0 or h <= 0:
-        errors.append(f"{segment_id}: crop has non-positive size or negative origin {crop}")
-    elif x + w > width or y + h > height:
-        errors.append(
-            f"{segment_id}: crop {crop} exceeds source {width}x{height}"
-        )
+    error = crop_error(segment_id, crop, width, height)
+    if error:
+        errors.append(error)
 
 
 def check_tts(build: Path, segment: dict, start: float, end: float,
