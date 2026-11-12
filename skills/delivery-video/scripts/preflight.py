@@ -182,7 +182,7 @@ def check_evidence(prefix: str, source: Path, declared_browser: bool,
     return evidence
 
 
-def check_demo_stage_evidence(prefix: str, source: Path, errors: list[str]) -> dict | None:
+def check_demo_stage_evidence(prefix: str, source: Path, errors: list[str]) -> None:
     """Headless stage recording: kind=demo-stage-recording, self-checks all passed."""
     before = len(errors)
     evidence_path = source.with_suffix(".evidence.json")
@@ -191,15 +191,15 @@ def check_demo_stage_evidence(prefix: str, source: Path, errors: list[str]) -> d
             f"{prefix}: demo-stage shot needs {evidence_path.name}; "
             "record with a headless scripted-stage tool that writes evidence"
         )
-        return None
+        return
     try:
         evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
         errors.append(f"{prefix}: invalid evidence JSON {evidence_path.name}: {exc}")
-        return None
+        return
     if not isinstance(evidence, dict):
         errors.append(f"{prefix}: evidence must be an object: {evidence_path.name}")
-        return None
+        return
     if evidence.get("kind") != DEMO_STAGE_KIND:
         errors.append(
             f"{prefix}: evidence kind {evidence.get('kind')!r} is not a demo-stage recording"
@@ -230,7 +230,7 @@ def check_demo_stage_evidence(prefix: str, source: Path, errors: list[str]) -> d
     video = evidence.get("video")
     if not isinstance(video, dict):
         errors.append(f"{prefix}: demo-stage evidence lacks video block")
-        return None
+        return
     if video.get("sha256") != sha256(source):
         errors.append(f"{prefix}: evidence sha256 does not match {source.name}")
     if video.get("fps") != FPS:
@@ -243,7 +243,7 @@ def check_demo_stage_evidence(prefix: str, source: Path, errors: list[str]) -> d
         recorded = float(video.get("duration_s"))
     except (CheckError, TypeError, ValueError) as exc:
         errors.append(f"{prefix}: demo-stage duration unreadable: {exc}")
-        return None
+        return
     if abs(actual - recorded) > 0.2:
         errors.append(
             f"{prefix}: demo-stage duration {recorded:.2f}s != source {actual:.2f}s"
@@ -253,16 +253,11 @@ def check_demo_stage_evidence(prefix: str, source: Path, errors: list[str]) -> d
             f"OK {prefix}: demo-stage scene={evidence.get('scene', {}).get('id')} "
             f"frames={frames} sha={str(video.get('sha256'))[:12]}"
         )
-    return {
-        "kind": DEMO_STAGE_KIND,
-        "size": video.get("size"),
-        "frames": frames,
-        "sha256": video.get("sha256"),
-    }
 
 
 def check_evidence_size(prefix: str, evidence: dict | None, width: int, height: int,
                         errors: list[str]) -> None:
+    """Browser/window evidence carries a size; demo-stage evidence (None) does not."""
     if evidence is None:
         return
     if [width, height] != [1920, 1080]:
@@ -392,7 +387,8 @@ def main() -> int:
         return report(errors, warnings)
     if not BUILD_NAME.match(build_path.name):
         errors.append(
-            f"build directory {build_path.name!r} is not accepted by render.py; "
+            f"build directory {build_path.name!r} is rejected by preflight "
+            "(render.py itself accepts any directory name); "
             "use screen_demo or screen_demo-<slug>"
         )
     try:
@@ -474,7 +470,8 @@ def main() -> int:
             errors.append(f"{prefix}: missing or empty recording {source}")
             continue
         if source_kind == "demo-stage":
-            evidence = check_demo_stage_evidence(prefix, source, errors)
+            check_demo_stage_evidence(prefix, source, errors)
+            evidence = None
         else:
             evidence = check_evidence(prefix, source, source_kind == "browser", errors)
 

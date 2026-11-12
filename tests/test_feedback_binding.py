@@ -181,6 +181,23 @@ class FeedbackReportBindingTests(unittest.TestCase):
         self.assertEqual(code, 1, output)
         self.assertIn("feedback markdown is missing: feedback.generated.md", output)
 
+    def test_intent_removed_and_markdown_edited_still_fails(self):
+        build = self.copy_build("intent-removed")
+        episode_path = build / "episode.json"
+        episode = json.loads(episode_path.read_text(encoding="utf-8"))
+        episode.pop("intent", None)
+        episode.pop("issue", None)
+        episode_path.write_text(json.dumps(episode, ensure_ascii=False), encoding="utf-8")
+        markdown = build / "feedback.generated.md"
+        markdown.write_text(
+            markdown.read_text(encoding="utf-8") + "\nTAMPERED: already fixed.\n",
+            encoding="utf-8",
+        )
+        code, output = self.run_verify(build)
+        self.assertEqual(code, 1, output)
+        self.assertIn("feedback markdown was edited after rendering", output)
+        self.assertIn("feedback.generated.md sha256 mismatch", output)
+
 
 if __name__ == "__main__":
     unittest.main()

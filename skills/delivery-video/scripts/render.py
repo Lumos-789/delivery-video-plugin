@@ -568,16 +568,22 @@ def loudnorm_finalize(raw: Path, final: Path) -> None:
 
 
 def parse_detects(log: str, key: str) -> list[dict]:
-    """Parse ffmpeg silencedetect/blackdetect/freezedetect key=value lines."""
+    """Parse ffmpeg silencedetect/blackdetect/freezedetect key=value lines.
+
+    blackdetect prints no space after the colon; silencedetect/freezedetect do.
+    A span still open at EOF has *_start with no *_end (kept, closed by caller).
+    """
     events, current = [], {}
     for line in log.splitlines():
-        for match in re.finditer(r"(\w+)_start: ([\d.]+)", line):
+        for match in re.finditer(r"(\w+)_start: ?([\d.]+)", line):
             current = {key: float(match.group(2))}
-        for match in re.finditer(r"(\w+)_end: ([\d.]+)", line):
+        for match in re.finditer(r"(\w+)_end: ?([\d.]+)", line):
             current["end"] = float(match.group(2))
             if "start" in current:
                 events.append(current)
                 current = {}
+    if "start" in current:
+        events.append(current)
     return events
 
 
@@ -648,6 +654,11 @@ def quality_gate(video: Path, work: Path) -> dict:
                 ["ffmpeg", "-v", "info", "-i", str(video), *args, "-f", "null", "-"],
                 capture_output=True, text=True)
             spans = parse_detects(scan.stderr, "start")
+            # freezedetect/blackdetect emit only *_start when the span runs to EOF
+            if total > 0:
+                for span in spans:
+                    if "end" not in span:
+                        span["end"] = max(span["start"], total)
             lengths = [s["end"] - s["start"] for s in spans if "end" in s]
             checks[f"{name}_spans"] = [
                 {"start": round(s["start"], 2), "end": round(s.get("end", 0), 2)}

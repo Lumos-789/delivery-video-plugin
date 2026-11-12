@@ -363,14 +363,18 @@ def main() -> int:
             "(video_sha256 missing or mismatched); rerun the gate"
         )
     episode_path = build / "episode.json"
+    episode = None
     if episode_path.is_file():
         try:
             episode = load_json(episode_path)
         except CheckError as exc:
             errors.append(str(exc))
-            episode = {}
-        if isinstance(episode, dict) and episode.get("intent") == "feedback":
-            errors.extend(check_feedback_report(build, digest, gate))
+    # episode.json is outside every hash chain, so a feedback binding in the gate
+    # report triggers the tamper checks even when the episode no longer says feedback
+    binding = gate.get("feedback") if isinstance(gate, dict) else None
+    feedback_episode = isinstance(episode, dict) and episode.get("intent") == "feedback"
+    if feedback_episode or (isinstance(binding, dict) and binding):
+        errors.extend(check_feedback_report(build, digest, gate))
     if critic_path.is_file():
         try:
             critic = load_json(critic_path)

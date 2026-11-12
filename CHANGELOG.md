@@ -1,5 +1,26 @@
 # Changelog
 
+## 1.2.2
+
+- **Fixed the dead black-frame check.** `parse_detects` required a space after the
+  colon, but ffmpeg prints blackdetect as `black_start:6 black_end:11.966667` with
+  no space (silencedetect/freezedetect do print one). A 12s video whose last 6s are
+  pure black passed the gate with empty `black_spans`; the regex now accepts both
+  formats, so `B101` fires again.
+- Detect spans that run to the end of the video are no longer dropped:
+  freezedetect emits only `freeze_start` (no `freeze_end`) when the freeze reaches
+  EOF, and such spans are now closed at the total duration, so a frozen tail
+  triggers `T301`/`T304`.
+- Feedback tamper-proofing can no longer be switched off by editing `episode.json`
+  (which sits outside every hash chain): `verify_delivery.py` now checks the
+  report/markdown hash bindings whenever the gate report carries a `feedback`
+  block, not only while episode.json still declares `intent: "feedback"`.
+- `preflight.py` no longer demands a `size` field or a 1920x1080 resolution from
+  demo-stage evidence, matching the documented demo-stage contract
+  (sha256/fps/frames/duration) and `verify_delivery.py`. The build-name rejection
+  message now attributes the check to preflight — render.py accepts any directory
+  name; preflight is what rejects it.
+
 ## 1.2.1
 
 - Docs fix: `references/recording.md` still claimed "the renderer crops to a 1080p
