@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.3
+
+- New icon: 1-bit monochrome pixel camera, clapperboard and glowing play
+  button. Part of the shared pixel family across the six plugins; no code
+  changes.
+
 ## 1.2.2
 
 - **Fixed the dead black-frame check.** `parse_detects` required a space after the
