@@ -306,7 +306,7 @@ def check_narration(text: str, segment_id: str) -> None:
             + ", ".join(cliches)
             + " -- rewrite as a plain factual statement from the viewer's perspective")
     for term in INTERNAL_TERMS:
-        if term in text.lower() or term in text:
+        if term in text.lower():
             print(f"WARN: narration for {segment_id} mentions internal jargon "
                   f"'{term}' -- fine for technical acceptance, remove it for "
                   "external deliveries", flush=True)
@@ -619,7 +619,10 @@ def quality_gate(video: Path, work: Path) -> dict:
             hard.append({"code": "M101", "message": f"resolution {wh}, expected {(W, H)}"})
         rate = video_stream.get("avg_frame_rate") or "0/1"
         num, _, den = rate.partition("/")
-        fps = float(num) / float(den or 1)
+        try:
+            fps = float(num) / float(den or 1)
+        except (ValueError, ZeroDivisionError):
+            fps = 0.0
         if abs(fps - FPS) > 0.01:
             hard.append({"code": "M102", "message": f"frame rate {fps:.3f}, expected {FPS}"})
         if video_stream.get("codec_name") != "h264":

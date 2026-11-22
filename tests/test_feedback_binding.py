@@ -199,5 +199,40 @@ class FeedbackReportBindingTests(unittest.TestCase):
         self.assertIn("feedback.generated.md sha256 mismatch", output)
 
 
+class UnparsableFrameRateTests(unittest.TestCase):
+    """A tampered artifact reporting avg_frame_rate 0/0 fails with a FAIL line."""
+
+    def test_zero_denominator_reports_fail_line_not_traceback(self):
+        import io
+        import types
+        from contextlib import redirect_stdout
+        from unittest import mock
+
+        with tempfile.TemporaryDirectory(prefix="dv-zerofps-") as tmp:
+            build = Path(tmp)
+            (build / "screen_demo.mp4").write_bytes(b"0" * 16)
+            probe = {
+                "streams": [
+                    {"codec_type": "video", "codec_name": "h264",
+                     "width": 1920, "height": 1080, "avg_frame_rate": "0/0"},
+                    {"codec_type": "audio", "codec_name": "aac"},
+                ],
+                "format": {"duration": "12.0", "size": "1500000"},
+            }
+            stdout = io.StringIO()
+            with mock.patch.object(sys, "argv", ["verify_delivery.py", str(build)]), \
+                    mock.patch.object(verify.shutil, "which", return_value="/usr/bin/ffmpeg"), \
+                    mock.patch.object(verify, "probe", return_value=probe), \
+                    mock.patch.object(
+                        verify.subprocess, "run",
+                        return_value=types.SimpleNamespace(returncode=0, stderr="")), \
+                    redirect_stdout(stdout):
+                code = verify.main()
+            output = stdout.getvalue()
+            self.assertEqual(code, 1, output)
+            self.assertIn("FAIL: invalid frame rate: 0/0", output)
+            self.assertIn("DELIVERY=FAIL", output)
+
+
 if __name__ == "__main__":
     unittest.main()

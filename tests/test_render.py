@@ -240,11 +240,11 @@ class QualityGateDetectTests(unittest.TestCase):
     def tearDown(self):
         self._tmp.cleanup()
 
-    def run_gate(self, detect_logs: dict[str, str]) -> dict:
+    def run_gate(self, detect_logs: dict[str, str], frame_rate: str = "30/1") -> dict:
         probe = {
             "streams": [
                 {"codec_type": "video", "codec_name": "h264",
-                 "width": 1920, "height": 1080, "avg_frame_rate": "30/1"},
+                 "width": 1920, "height": 1080, "avg_frame_rate": frame_rate},
                 {"codec_type": "audio", "codec_name": "aac"},
             ],
             "format": {"duration": str(self.DURATION), "size": "1500000"},
@@ -289,6 +289,16 @@ class QualityGateDetectTests(unittest.TestCase):
         self.assertIn("T301", codes)
         self.assertIn("T304", codes)
         self.assertEqual(report["checks"]["freeze_spans"], [{"start": 6.0, "end": 12.0}])
+        self.assertEqual(report["status"], "fail")
+
+    def test_unparsable_frame_rate_fails_as_m102_not_traceback(self):
+        report = self.run_gate({
+            "blackdetect": "",
+            "freezedetect": "",
+            "silencedetect": "",
+        }, frame_rate="0/0")
+        codes = [item["code"] for item in report["hard_failures"]]
+        self.assertIn("M102", codes)
         self.assertEqual(report["status"], "fail")
 
 

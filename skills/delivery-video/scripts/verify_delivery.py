@@ -133,7 +133,7 @@ def check_shot(prefix: str, shot: Path, evidence_path: Path, errors: list[str]) 
         return
     if kind != "demo-stage-recording":
         if size != [1920, 1080]:
-            errors.append(f"{prefix}: browser shot must be 1920x1080, got {size[0]}x{size[1]}")
+            errors.append(f"{prefix}: evidence-backed shot must be 1920x1080, got {size[0]}x{size[1]}")
         if evidence.get("size") != size:
             errors.append(f"{prefix}: evidence size {evidence.get('size')!r} != shot {size}")
     if abs(actual - recorded) > 0.2:
@@ -302,9 +302,13 @@ def main() -> int:
                 "expected 1920x1080, got "
                 f"{video_stream.get('width')}x{video_stream.get('height')}"
             )
-        fps = parse_fps(str(video_stream.get("avg_frame_rate", "0/1")))
-        if abs(fps - 30) > 0.01:
-            errors.append(f"expected 30fps, got {fps:.3f}")
+        try:
+            fps = parse_fps(str(video_stream.get("avg_frame_rate", "0/1")))
+        except (CheckError, ValueError) as exc:
+            errors.append(str(exc))
+        else:
+            if abs(fps - 30) > 0.01:
+                errors.append(f"expected 30fps, got {fps:.3f}")
     if audio_stream is None:
         errors.append("artifact has no audio stream")
     elif audio_stream.get("codec_name") != "aac":

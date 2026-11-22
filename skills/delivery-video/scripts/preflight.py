@@ -261,7 +261,7 @@ def check_evidence_size(prefix: str, evidence: dict | None, width: int, height: 
     if evidence is None:
         return
     if [width, height] != [1920, 1080]:
-        errors.append(f"{prefix}: browser source must be 1920x1080, got {width}x{height}")
+        errors.append(f"{prefix}: evidence-backed source must be 1920x1080, got {width}x{height}")
     if evidence.get("size") != [width, height]:
         errors.append(
             f"{prefix}: evidence size {evidence.get('size')!r} != source {width}x{height}"
