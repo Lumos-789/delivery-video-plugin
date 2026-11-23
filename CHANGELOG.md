@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.2.5
+
+- An unparsable `avg_frame_rate` (`0/0`) no longer escapes as a bare traceback:
+  the quality gate records an `M102` failure and `verify_delivery.py` prints a
+  `FAIL:` line; the same division in `render.py` is guarded (tests 29 → 31).
+- Preflight and verify error messages say `evidence-backed source` / shot
+  instead of `browser`, matching the `source` values the evidence rule covers.
+- `check_narration` drops a redundant second `in text` test.
+
 ## 1.2.4
 
 - Review-fix round (9 items). Docs: `episode-and-review.md` still said a static
