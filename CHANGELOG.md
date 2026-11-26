@@ -1,5 +1,75 @@
 # Changelog
 
+## Unreleased
+
+Behavior changes to know before upgrading:
+
+- Default `layout` is now `fullbleed`: the recording fills the 1920x1080 canvas (1:1 for a
+  1080p take). `banded` is still available and unchanged.
+- `verify_delivery.py` requires `visual-critic.json`; the `--require-critic` flag is gone.
+- The narration cache is content-addressed (`tts/<id>.<key>.mp3|.json`). Files named
+  `tts/<id>.mp3|.json` from earlier versions are ignored (preflight lists them) and an
+  existing build synthesizes its narration once more.
+- Artifacts rendered by earlier versions fail verification until re-rendered, because the
+  gate report now has to bind the episode and the timeline.
+
+### Evidence chain
+
+- `quality_gate/report.json` binds `episode.json`, `timeline.json` and `delivery.generated.md`
+  next to the artifact SHA256; `timeline.json` records each take's SHA256 and playback speed.
+  `verify_delivery.py` fails when any of them, or a take, changed after rendering, and on
+  reports without the episode and timeline bindings.
+- Playback outside 0.7x–1.5x is called out during the render and disclosed in the generated
+  note.
+- Optional `evidence` block in `episode.json` carries version facts into the note.
+
+### Render pipeline
+
+- All narration is synthesized and every duration rule is checked before the first frame is
+  rendered; every offending segment is listed at once.
+- edge-tts service and network failures raise a clean `FAIL:` naming the segment instead of
+  a traceback; nothing is left behind on failure.
+- `render.py` runs the same validation as `preflight.py` and refuses to render on any error.
+  A browser segment without evidence, a slash in a segment id, a corrupt cache and a bad
+  evidence `frames` field all end in `FAIL:` lines.
+- Karaoke subtitles: spoken characters are lit, the rest wait in grey.
+- The scripts no longer write bytecode into the plugin directory, and ffmpeg no longer reads
+  stdin.
+
+### Cards
+
+- New `kind: "card"` segment: a renderer-made title card, narrated or silent (`duration`,
+  1–8s).
+- The gate cuts card intervals out of the black, freeze and silence scans (`exempt` in the
+  report) and fails with `C301` when cards cover more than 25% of the video.
+  `render.py gate --timeline` supplies the card intervals for an attachment check.
+
+### Review
+
+- The render writes a `review/` packet: full-resolution start/mid/end frames per segment,
+  contact sheets and `critic.draft.json`. The per-segment `preview_*.png` files are gone.
+- `visual-critic.json` is checked mechanically: bound to the artifact, reviewer named, five
+  dimensions scored, every segment and the first and last second reviewed.
+
+### Lint
+
+- The polyphone lint only flags genuinely open readings (206 warnings down to 11 on the same
+  220 real narration segments); everyday words such as 结果, 数据, 系统 and 弹出 stay quiet.
+- New warnings for narration longer than about 50 spoken characters and for takes smaller
+  than the canvas.
+
+### Fixes
+
+- Subtitles and chips use the Simplified-Chinese font face. Face 0 of the macOS collections
+  is the Traditional one (PingFang HK, Heiti TC), so Simplified narration used to render with
+  Traditional glyph forms and centered punctuation. PingFang is preferred over Heiti and the
+  macOS asset location is searched as well.
+- The narration lead-in is derived from one constant instead of a hard-coded 150 ms.
+- `package.json` `files` lists the whole `scripts/` directory.
+- `render.py` is split into `dv_core`, `dv_episode`, `dv_tts`, `dv_gate`, `dv_draw`,
+  `dv_notes` and `dv_review` behind the three entry points. Tests grew from 31 to 106,
+  including an offline end-to-end render.
+
 ## 1.2.5
 
 - An unparsable `avg_frame_rate` (`0/0`) no longer escapes as a bare traceback:

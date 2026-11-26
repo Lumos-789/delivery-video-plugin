@@ -54,7 +54,7 @@ class QualityGateDetectTests(unittest.TestCase):
         self._tmp.cleanup()
 
     def run_gate(self, detect_logs: dict[str, str], frame_rate: str = "30/1",
-                exempt: list | None = None) -> dict:
+                exempt=None) -> dict:
         probe = {
             "streams": [
                 {"codec_type": "video", "codec_name": "h264",

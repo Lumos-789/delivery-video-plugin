@@ -8,21 +8,31 @@
 | --- | --- | --- |
 | `voice` | yes | edge-tts voice, e.g. `zh-CN-YunxiNeural`, `en-US-AndrewNeural` |
 | `rate` | no | speech rate, default `+5%`, format `+N%` or `-N%` |
-| `title` | no | internal identification only |
+| `title` | no | heading of the generated delivery note; never drawn on screen |
+| `layout` | no | episode-level. `fullbleed` (default) scales the recording onto the 1920x1080 canvas — a 1080p take maps 1:1 — with the chip and subtitles overlaid on a backing box. `banded` fits it into a smaller content box above a dark subtitle band |
+| `evidence` | no | version facts carried into `delivery.generated.md` and bound with the episode: an object whose values are strings, numbers or lists of them, e.g. `{"git_sha": "…", "environment": "staging", "tickets": ["T-1001"]}` |
 | `intent` | no | `delivery` (default) or `feedback`; feedback requires the `issue` block |
 | `issue` | for feedback | defect report metadata, see below |
-| `segments` | yes | non-empty array, unique `id`s |
-| `segments[].id` | yes | ASCII id, e.g. `01-entry` |
+| `segments` | yes | non-empty array with unique `id`s; every segment is a shot (default) or a card |
+| `segments[].id` | yes | ASCII id used as a file stem: letters, digits, `_`, `-`, starting with a letter or digit |
+| `segments[].kind` | no | `shot` (default) or `card` |
 | `segments[].case` | no | acceptance-case chip shown top-left, e.g. `D-02`; recommended when the video covers 2+ cases |
 | `segments[].phase` | for feedback | `context`, `repro`, `actual`, `expected` or `impact`; becomes the second chip |
-| `segments[].label` | yes | short top-left label, 2–10 chars |
-| `segments[].shot` | yes | recording file relative to the build directory |
-| `segments[].start` | yes | range start in the source, seconds |
-| `segments[].end` | yes | range end, must exceed start |
-| `segments[].source` | no | `browser` requires `<shot-stem>.evidence.json`; `demo-stage` requires headless-stage evidence; window recordings may say `window` or omit |
-| `segments[].crop` | no | `[x, y, w, h]` in source pixels. Absent = the full frame is shown (recommended for window/browser takes); an explicit crop is bounds-checked against the real source pixels and fails loud. Never rely on a silent default to hide sensitive regions — crop on purpose or cut the take |
-| `segments[].text` | yes | one continuous narration line, no newlines; subtitles auto-break at punctuation |
-| `layout` | no | episode-level, `banded` (default; content box above a dark subtitle band) or `fullbleed` (recording scaled 1:1 onto the 1920x1080 canvas, case chip and subtitles overlaid with a backing box). Use `fullbleed` when every pixel of the screen must be visible |
+| `segments[].label` | shots | short top-left label; optional on cards |
+| `segments[].shot` | shots | recording file relative to the build directory; it must stay inside it |
+| `segments[].start` | shots | range start in the source, seconds |
+| `segments[].end` | shots | range end; must exceed `start` and not run past the take |
+| `segments[].source` | shots | `browser` requires `<shot-stem>.evidence.json`; `demo-stage` requires headless-stage evidence; window recordings may say `window` or omit |
+| `segments[].crop` | shots | `[x, y, w, h]` in source pixels. Absent = the full frame is shown (recommended for window/browser takes); an explicit crop is bounds-checked against the real source pixels and fails loud. Never rely on a silent default to hide sensitive regions — crop on purpose or cut the take |
+| `segments[].title` | cards | the large text on the card, about 40 spoken characters at most; wrapped automatically |
+| `segments[].duration` | silent cards | 1–8 seconds, default 2.5; only for a card without `text` |
+| `segments[].text` | shots: yes; cards: no | one continuous narration line, no newlines; preflight warns past about 50 spoken characters. Subtitles light up character by character |
+
+### Cards
+
+A card is drawn by the renderer: dark canvas, an accent bar, the `title` in large type and the usual chips. With `text` the card is narrated like any shot and lasts as long as its narration; when the text differs from the title it also runs as a subtitle. Without `text` the card is silent for `duration`. A card must not carry `shot`, `start`, `end`, `source` or `crop`.
+
+The gate treats a card's interval as allowed to be still and silent: those intervals are cut out of the black, freeze and silence scans, they are listed in the report under `exempt`, and `T304` is measured against the remaining footage. Cards may not carry the demo — more than 25% of the video as cards fails with `C301`. A closing card is a result state when its title states the result.
 
 ### Feedback issues
 
@@ -40,9 +50,10 @@
 
 At least one segment must use `phase: "actual"`. `render.py` writes `feedback.json` with the
 issue, the segment phases and the artifact SHA256; `verify_delivery.py` treats a missing or
-misbound report as a failure, and the gate report binds a normalized hash of the report fields
-plus the exact `feedback.generated.md` bytes, so editing either file after rendering fails the
-gate. Delivery episodes without `intent` keep the original contract.
+misbound report as a failure, and the gate report binds `episode.json`, `timeline.json`, a
+normalized hash of the report fields plus the exact `feedback.generated.md` bytes, so editing
+any of them after rendering fails the gate. Delivery episodes without `intent` keep the
+original contract.
 
 During `phase: "repro"` segments the renderer also draws the first five `issue.repro` steps in
 the top-right corner; the full list stays in the generated markdown. The severity becomes the
@@ -51,16 +62,17 @@ narration. A feedback video reports what the current build does: never mix in fo
 older build, claim a fix, or hide a passing case to make the defect look worse. A `phase` on a
 delivery episode is rejected, so the two modes cannot be mixed by accident.
 
-### Generated feedback files
+### Generated files
 
 | File | Contents |
 | --- | --- |
-| `feedback.json` | machine-readable issue, segment phases and artifact SHA256; the gate report binds its normalized content hash |
-| `feedback.generated.md` | ticket-ready draft: expected/actual, numbered repro steps, per-segment in-video timing and source range, artifact hash and gate result; the gate report binds its exact byte hash |
+| `delivery.generated.md` | delivery episodes: artifact facts and SHA256, the `evidence` block, one row per segment with in-video range, source range and playback speed, gate warnings, retime notes |
+| `feedback.json` | feedback episodes: machine-readable issue, segment phases and artifact SHA256 |
+| `feedback.generated.md` | feedback episodes: ticket-ready draft with expected/actual, numbered repro steps, per-segment timing and source range, artifact hash and gate result |
 
-`feedback.generated.md` is rewritten on every render — edit a copy or keep additions in a
-separate note. The draft deliberately does not claim a fix, a root cause or coverage of other
-environments.
+The generated markdown is rewritten on every render and bound into the gate report — edit a
+copy or keep additions in a separate note. The feedback draft deliberately does not claim a
+fix, a root cause or coverage of other environments.
 
 ### Case list (recommended, not enforced)
 
@@ -71,9 +83,9 @@ Only for a video covering two or more cases: write one row per case — case id,
 - Leave 0.3–0.8s before the action starts so the entry reads.
 - Success feedback, read-back and key states must fall inside the range.
 - The last segment must be a result, not a waiting state.
-- A stretch of static frames longer than ~2s inside a take means cut it: idle time makes the whole video feel stuck (`T301` fires on a ≥2s frozen span, `T304` when frozen frames reach 20% of the video).
+- A stretch of static frames longer than ~2s inside a take means cut it: idle time makes the whole video feel stuck (`T301` fires on a ≥2s frozen span, `T304` when frozen frames reach 20% of the footage).
 - You may cut waiting gaps, but never merge pieces of different runs into one success.
-- Playback speed lands between 0.3x and 3x by construction; below 0.3x the action is too slow or the narration too short, above 3x the narration overruns the range — split or trim instead of forcing.
+- Playback speed lands between 0.3x and 3x by construction; below 0.3x the action is too slow or the narration too short, above 3x the narration overruns the range — split or trim instead of forcing. Outside 0.7x–1.5x the render calls the segment out and the generated note discloses it.
 - Aim for 15–35 characters per narration segment; important results get their own segment.
 - In a multi-case video, keep one result segment per case and follow the execution order, so the viewer can tell where one case ends and the next begins.
 
@@ -85,13 +97,28 @@ Browser segments carry a `<shot-stem>.evidence.json` beside the take; the full c
 
 Segments with `source: "demo-stage"` come from a headless scripted-stage tool. The evidence must show `kind: "demo-stage-recording"`, `status: "passed"`, all self-checks passed, `capture.headless: true`, `capture.window_visible: false`, and a `video` block with matching sha256/fps/frames/duration. A visible window during recording fails — the stage must not steal focus.
 
-### TTS cache contract
+### Narration cache
 
-Narration is cached at `tts/<segment-id>.mp3` + `tts/<segment-id>.json`. The clock JSON records `{text, voice, rate, words[]}`; changing any of them without deleting the cache files fails the render with a mismatch. Editing narration = delete that segment's two cache files and re-render.
+Narration is cached by content at `tts/<segment-id>.<key>.mp3` + `tts/<segment-id>.<key>.json`, where `key` is derived from the text, the voice and the rate. A cached pair is reused only for exactly that combination; change any of the three and the line is synthesized again — nothing has to be deleted. Both halves are written atomically, so an incomplete pair is a plain cache miss. Files named `tts/<id>.mp3` or `tts/<id>.json` without a key come from older versions: they are ignored, and preflight lists them once so they can be deleted.
+
+All narration is synthesized, and every segment's speed checked, before the first frame is rendered: a segment that cannot be timed fails there, together with every other bad segment, and costs no render time.
+
+## What a render writes
+
+| File | Contents |
+| --- | --- |
+| `screen_demo.mp4` | the artifact: 1920x1080, 30fps, h264, narrated, loudness-normalized |
+| `timeline.json` | per segment: kind, in-video range, label and case; shots add the source file, source range, playback speed and the take's SHA256; cards add the title |
+| `cover.png` | the frame at 2s |
+| `review/frames/<id>-start\|mid\|end.png` | full-resolution first, middle and last frame of every segment |
+| `review/sheet_NN.png` | contact sheets, six segments per page, captioned with range and playback speed |
+| `review/critic.draft.json` | skeleton of the visual review, bound to the artifact SHA256 |
+| `delivery.generated.md` | delivery episodes; feedback episodes write the two feedback files instead |
+| `quality_gate/report.json` | gate result, checks and bindings |
 
 ## visual-critic.json
 
-An independent visual review, ideally by a second model or reviewer who has not seen the maker's conclusions. Schema:
+The record that the frames were looked at. Start from `review/critic.draft.json`, keep only the frames actually reviewed, score the dimensions, name the reviewer, and save the result as `visual-critic.json` at the build root. The renderer never writes that file.
 
 ```json
 {
@@ -105,9 +132,9 @@ An independent visual review, ideally by a second model or reviewer who has not 
     "business_content_alignment": 0.97
   },
   "reviewed_frames": [
-    {"time_s": 1.0, "scene": "entry"},
-    {"time_s": 8.0, "scene": "key action"},
-    {"time_s": 16.0, "scene": "result read-back"}
+    {"time_s": 0.6, "segment": "01-entry", "frame": "review/frames/01-entry-start.png"},
+    {"time_s": 8.0, "segment": "01-entry", "frame": "review/frames/01-entry-mid.png"},
+    {"time_s": 11.2, "segment": "03-result", "frame": "review/frames/03-result-end.png"}
   ],
   "observations": [
     "Subtitles complete; no controls covered.",
@@ -121,7 +148,7 @@ An independent visual review, ideally by a second model or reviewer who has not 
 }
 ```
 
-`video_sha256` must match the current artifact, otherwise the review binds to nothing.
+`verify_delivery.py` requires the file and checks it: `status` is `pass`, `critical` is empty, `video_sha256` is the current artifact, `reviewer` is named, each of the five dimensions is a number from 0 to 1, every segment has a reviewed frame inside its range, and the first and the last second were each reviewed. For an external delivery the reviewer must be someone who has not seen the maker's conclusions — a second model or window working from the packet.
 
 ## Reading the quality report
 
@@ -131,11 +158,14 @@ An independent visual review, ideally by a second model or reviewer who has not 
 - `score.total` plus the per-check details; don't judge by the total alone.
 - `warnings` — actionable anomalies such as `E301` (long silence); keep them visible.
 - `notices` — advisory measurements (e.g. bitrate density). They do not reduce the score; the gate-code table in [SKILL.md](../SKILL.md) says what to do with each code.
-- When `verify_delivery.py --require-critic` is requested for an external delivery and `visual-critic.json` is missing, verification fails with `missing independent visual review: <build>/visual-critic.json`.
+- `exempt` — the card intervals left out of the black, freeze and silence scans.
+- The bindings: `video_sha256`, `episode`, `timeline` and `delivery` (or `feedback`). `verify_delivery.py` recomputes every one of them and fails when `episode.json`, `timeline.json`, a take or the generated note changed after rendering. A report without the `episode` and `timeline` bindings — from an older version or from the attachment gate — fails too.
 
-The gate binds to the artifact via `video_sha256`; after any re-render the gate re-runs automatically with `render.py render`. For an attachment gate on an arbitrary mp4, run `render.py gate --video <mp4> --work <dir>` — it writes its own report.
+For an attachment gate on an arbitrary mp4, run `render.py gate --video <mp4> --work <dir>` — it writes its own report; add `--timeline <build>/timeline.json` when that video contains cards.
 
-## delivery.md template
+## delivery.md
+
+The generated `delivery.generated.md` already holds the artifact facts, the version evidence, the segment table with playback speeds, gate warnings and retime notes. `delivery.md` adds what only the maker knows:
 
 ````markdown
 # <Feature> delivery demo
@@ -166,7 +196,7 @@ The gate binds to the artifact via `video_sha256`; after any re-render the gate 
 - Takes: <directory>
 - Gate: <report.json absolute path>, PASS, <score>
 - Attachment gate: <report for the posted file>, PASS, profile delivery-v1, uploaded SHA256 <...>
-- Visual review: <visual-critic.json path or "not performed">
+- Visual review: <visual-critic.json path>
 
 ## Commands actually run
 
@@ -190,9 +220,15 @@ Awaiting user review — not uploaded / not published.
 | --- | --- |
 | `missing real recording` | `shot` path wrong or file not in the build directory |
 | `invalid recording interval` | `start/end` beyond the source, or the cut lands mid-action |
-| `recording speed outside 0.3x..3x` | shorten narration, widen the range or split the segment |
+| `recording speed outside 0.3x..3x` | shorten narration, widen the range or split the segment; every such segment is listed before anything renders |
+| `narration synthesis failed for <id>` | the TTS service or the network failed; finished segments stay cached, so rerun |
+| `corrupt TTS clock cache` | delete the named file; the line is synthesized again |
+| `legacy TTS cache files are ignored` | files from an older version; delete them |
 | Large black areas in a take | window off-screen or occluded during recording; re-record |
 | Subtitles clipped or covering controls | adjust `crop` or shorten the narration |
+| `C301` static cards cover too much | shorten the cards or record more of the feature |
 | Gate hard failure | open `report.json`, fix the material per the highest-severity item; never touch thresholds |
+| `missing visual review` | look at `review/sheet_NN.png` and the frames, complete `review/critic.draft.json`, save it as `visual-critic.json` |
+| `… was edited after rendering` | `episode.json`, `timeline.json`, a take or the generated note changed since the render; re-render |
 | Final duration mismatch | re-render from scratch; do not trim the artifact by hand |
 | Portrait need | this pipeline is 16:9 landscape by design; use a portrait-dedicated recipe instead of hard-cropping |

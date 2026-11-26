@@ -26,14 +26,16 @@ On Windows, use `py -3` instead of `python3` when that is the installed launcher
 
 A delivery is done only when all of these hold:
 
-- Evidence the current version really runs: git SHA, deployed or local version, real test ticket/account/request IDs.
-- Every segment in `episode.json` points at a real recording with a traceable time range.
+- Evidence the current version really runs: git SHA, deployed or local version, real test ticket/account/request IDs. Put those facts in the `evidence` block of `episode.json` so they travel into the generated note and are bound like everything else.
+- Every shot segment in `episode.json` points at a real recording with a traceable time range.
 - The artifact is rendered by `render.py`: 1920x1080, 30fps, h264 with narration and burned subtitles. AAC is what the renderer produces, but a non-AAC audio track is only a gate warning (`E102`), not a hard failure.
 - The last segment ends on a **result state** — a title, data or success message visible and read back, never on a waiting spinner or a black frame.
 - `quality_gate/report.json` has `status: "pass"` and empty `hard_failures`; never loosen thresholds to pass.
-- Key frames have been visually inspected; for external deliveries an independent `visual-critic.json` review is required (`verify_delivery.py --require-critic`).
+- `visual-critic.json` is complete: every segment and the ending were looked at in the `review/` packet, the five dimensions are scored, a reviewer is named. `verify_delivery.py` fails without it. For external deliveries the reviewer is a second model or window that has not seen the maker's conclusions.
 - Anything posted to a ticket, chat or customer channel was gated first (`render.py gate`), and **the uploaded file is the gated file** (matching SHA256).
-- A `delivery.md` notes version, evidence, absolute artifact path, SHA256, the actual commands, and the "not yet uploaded/published" status.
+- `delivery.md`, written on top of the generated `delivery.generated.md`, notes version, evidence, absolute artifact path, SHA256, the actual commands, and the "not yet uploaded/published" status.
+
+The evidence chain is mechanical: the gate report binds the artifact SHA256, `episode.json`, `timeline.json`, the generated note and every take's SHA256. `verify_delivery.py` fails when any of them changes after rendering — re-render, never edit around it.
 
 A passing gate is not the user's acceptance. Posting to a ticket or group is a delivery action — do it only when the user asks in that turn; public upload or publishing waits for an explicit "send".
 
@@ -74,9 +76,9 @@ One segment proves one result:
 | 02-action | F-01 | key operation | real click/submit, save evidence | what the user did, what the system answered |
 | 03-result | F-01 | result read-back | refresh/read back, result still there | the business outcome, not the internals |
 
-For external deliveries the narration states user-visible facts only — no "build", "API", "database", "pipeline", "deploy" jargon and no internal codenames. Technical acceptance may quote real commands and evidence, still exactly as run. One sentence carries one complete thought; avoid long embedded clauses. The renderer hard-fails one Chinese AI-cliche template — `这…不是…而是/是` (for example 「这不是慢，而是缓存没刷新」) — and warns on internal jargon. The English "this is not X, it's Y" shape is not matched, so this red line only bites Chinese narration.
+For external deliveries the narration states user-visible facts only — no "build", "API", "database", "pipeline", "deploy" jargon and no internal codenames. Technical acceptance may quote real commands and evidence, still exactly as run. One sentence carries one complete thought; preflight warns when one segment grows past about 50 spoken characters. The renderer hard-fails one Chinese AI-cliche template — `这…不是…而是/是` (for example 「这不是慢，而是缓存没刷新」) — and warns on internal jargon. The English "this is not X, it's Y" shape is not matched, so this red line only bites Chinese narration.
 
-Give the video a short background opening. Before the first case, one segment — or one sentence in the first segment — should say what this feature is, who it is for and what problem this demo covers; later cases then only explain their own delta and expected result. Keep the background in the user's language and grounded in what is actually on screen. Recommended, not a required field, and the user decides how much context they want.
+Give the video a short background opening: a narrated opening card, or one sentence in the first segment, says what this feature is, who it is for and what problem this demo covers; later cases then only explain their own delta and expected result. Keep the background in the user's language and grounded in what is actually on screen. Recommended, not a required field, and the user decides how much context they want.
 
 ### 4. Record the real screen
 
@@ -85,8 +87,9 @@ Use the recording tool you have — see [references/recording.md](references/rec
 - One segment = one continuous real operation; the success feedback and read-back should land inside the same take when possible.
 - Never overwrite old takes; new version = new filenames.
 - Never substitute footage from a different run, and never cut pieces of different runs into one "success".
-- Browser footage recorded by a scripted screencast tool should carry a `<take>.evidence.json` beside it (sha256, size, duration, frames); mark those segments `source: "browser"` — preflight fails a browser segment without evidence.
+- Browser footage recorded by a scripted screencast tool should carry a `<take>.evidence.json` beside it (sha256, size, duration, frames); mark those segments `source: "browser"` — a browser segment without evidence fails preflight and render alike.
 - Dedicated test accounts and data; crop unrelated customer info, contacts, debug panels.
+- Record at 1920x1080 or larger: preflight calls out any take that would be upscaled to the canvas.
 - If a take shows a long frozen frame, a blank screen, or captured notifications/privacy content — delete it and re-record. Fix the material, not the threshold.
 
 Recommended for multi-case deliveries: run and record one case at a time. A case should start from a known state and own its takes (for example `F-01-entry.mp4`, `F-02-result.mp4`), so the footage, the case id and the narration all point at the same run. Reset or prepare test data between cases instead of inheriting the previous case's result state, unless the cases genuinely share one continuous flow. Re-record a bad take in full; never splice half of one run with another to make a case look complete. Keep takes and the case list inside the target project's own media/build location, not inside the skill or plugin directory.
@@ -102,26 +105,27 @@ Build directory: `build/screen_demo-<slug>/`. Full field reference: [references/
   "voice": "zh-CN-YunxiNeural",
   "rate": "+5%",
   "title": "Feature delivery demo",
-  "layout": "fullbleed",
+  "evidence": {"git_sha": "<commit>", "environment": "staging"},
   "segments": [
-    {
-      "id": "01-entry",
-      "case": "F-01",
-      "label": "Entry",
-      "shot": "take-01.mp4",
-      "start": 0.5,
-      "end": 11.5,
-      "text": "Open the order detail page; the task list and the save action are both here."
-    }
+    {"id": "00-open", "kind": "card", "title": "Order task list 2.0",
+     "text": "This demo covers owner reassignment for the operations team."},
+    {"id": "01-entry", "case": "F-01", "label": "Entry", "shot": "take-01.mp4",
+     "start": 0.5, "end": 11.5,
+     "text": "Open the order detail page; the task list and the save action are both here."},
+    {"id": "99-close", "kind": "card", "title": "Both cases passed", "duration": 2}
   ]
 }
 ```
 
-`shot` is relative to the build directory; `start`/`end` select the range inside that same take. Frame geometry is opt-in: without `crop` the whole recording is shown (`layout` defaults to `banded`; `fullbleed` scales the recording 1:1 onto the canvas). Only declare `crop` (`[x, y, w, h]` source pixels, bounds-checked) when the frame must genuinely exclude something — a silent default that trims edges on its own was the bug class this replaced, so never re-introduce one. Speed is hard-checked, not clamped: outside 0.3x–3x both preflight and render fail instead of adjusting the speed, so if narration does not fit, split the segment or cut information — never force it.
+`shot` is relative to the build directory; `start`/`end` select the range inside that same take. Frame geometry is opt-in: without `crop` the whole recording is shown. `layout` defaults to `fullbleed`, which maps a 1920x1080 recording 1:1 onto the canvas; `banded` fits it into a smaller content box above a dark subtitle band. Only declare `crop` (`[x, y, w, h]` source pixels, bounds-checked) when the frame must genuinely exclude something — a silent default that trims edges on its own was the bug class this replaced, so never re-introduce one.
+
+Each shot is timed to its narration. Speed is hard-checked, not clamped: outside 0.3x–3x both preflight and render fail instead of adjusting the speed, so if narration does not fit, split the segment or cut information — never force it. Playback noticeably away from real time (outside 0.7x–1.5x) is called out when rendering and disclosed in the generated note.
+
+A `kind: "card"` segment is made by the renderer and carries no `shot`, `start`, `end` or `source`. It shows `title` in large type; with `text` it is narrated and lasts as long as the narration, without `text` it lasts `duration` (1–8s, default 2.5s). Cards open the video, close it on the result, or separate sections. They frame the result and never stand in for the feature: the gate fails (`C301`) when cards cover more than a quarter of the video, and the last segment still has to end on a result.
 
 When several acceptance cases share one video, give every segment the `case` id of the run it came from and keep the case order the same as the execution order. The field stays optional; it becomes the on-screen chip and makes it easy to confirm that each case has its own result segment.
 
-Narration polyphones: preflight warns on chars whose Mandarin reading depends on context (行 重 还 都 长 得 着 差 数 干 应 结 系 弹 屏). The classic offender is 行 — a table row (háng) often reads as xíng; write 一条/这一单 instead. Resolve every warning by rewriting or by listening to the segment audio; never ship a narration you have not heard.
+Narration polyphones: preflight warns only where the Mandarin reading is genuinely open — a table row 行 outside the common 执行/银行 words, 归还, 首都, 着急/着重, 数一数 and the like. 结果, 数据, 系统, 弹出 and other everyday words stay quiet. Resolve each warning by rewriting to an unambiguous word (write 一条/这一单 instead of 一行). You cannot listen to the audio: never claim a reading was verified by ear.
 
 Run the preflight before rendering:
 
@@ -129,7 +133,7 @@ Run the preflight before rendering:
 python3 <skill>/scripts/preflight.py build/screen_demo-<slug>
 ```
 
-It checks JSON structure, recordings, intervals, crops, evidence files, cached-TTS contracts, narration red lines and polyphone warnings. FIX the material on FAIL; do not bring problems to the renderer.
+It checks JSON structure, recordings, intervals, crops, evidence files, narration lints and the narration already cached, and reports every problem at once. FIX the material on FAIL; do not bring problems to the renderer. `render.py` runs the same validation and refuses to render on any error, so skipping preflight only moves the same failure later.
 
 ### 6. Render
 
@@ -137,23 +141,31 @@ It checks JSON structure, recordings, intervals, crops, evidence files, cached-T
 python3 <skill>/scripts/render.py render build/screen_demo-<slug>
 ```
 
-This synthesizes narration (edge-tts, cached per segment), times each segment to the narration, draws the label chip and word-synced subtitles, concatenates, loudness-normalizes to -14 LUFS, then runs the built-in quality gate. Output: `screen_demo.mp4`, `timeline.json`, `cover.png`, `preview_*.png`, `quality_gate/report.json`. Nonzero exit or `gate=fail` = fix and re-render.
+This synthesizes every narration first (edge-tts, cached by content) and checks every segment's speed before rendering a frame, then times each segment to its narration, draws the label chip and karaoke subtitles, concatenates, loudness-normalizes to -14 LUFS and runs the built-in gate. Output: `screen_demo.mp4`, `timeline.json`, `cover.png`, `delivery.generated.md` (or the feedback files), the `review/` packet and `quality_gate/report.json`. Nonzero exit or `gate=fail` = fix and re-render.
 
-### 7. Verify the artifact
+Editing a narration line needs no cache cleanup: narration is cached by content (text, voice, rate), so a changed line is simply synthesized again.
+
+### 7. Review the frames and record it
+
+Look at what was rendered before claiming anything: `review/sheet_NN.png` shows one row per segment — first, middle and last frame with its in-video range and playback speed; open the full-resolution `review/frames/<id>-start|mid|end.png` whenever a tile raises a question. Check that subtitles are readable and inside the safe area, interface text is legible, the screen matches each spoken claim, and the ending is a result state.
+
+Record the review: fill in `review/critic.draft.json` (score the dimensions, note observations and limitations, set `status`, name the `reviewer`), keep only the frames actually looked at, and save it as `visual-critic.json`. `verify_delivery.py` requires that record and checks it mechanically — bound to this artifact, every segment covered, the last second reviewed.
 
 ```bash
-python3 <skill>/scripts/verify_delivery.py build/screen_demo-<slug> --require-critic
+python3 <skill>/scripts/verify_delivery.py build/screen_demo-<slug>
 ```
 
-Checks decode integrity, spec (h264/1080p30; aac is checked but warn-only), gate report binding (video_sha256), per-shot evidence and the visual critic. Then actually watch it — at least the opening, every key operation, the result read-back and the ending. For an independent review, have a second model/window review key frames without seeing your conclusions first, write `visual-critic.json` (schema in the references file), and only then claim independent review.
+It checks decode integrity, spec (h264/1080p30; aac is checked but warn-only), the gate report bindings (artifact, script, timeline, takes, generated note), per-shot evidence and the visual review. For an external delivery the reviewer is a second model or window working from the packet without your conclusions; only then claim independent review.
 
 ### 8. Attachment gate before posting
 
 Any mp4 going into a ticket, group chat or review link passes the gate first — it needs no episode.json:
 
 ```bash
-python3 <skill>/scripts/render.py gate --video <absolute mp4 path> --work <same dir>/quality_gate-attachment
+python3 <skill>/scripts/render.py gate --video <absolute mp4 path> --work <same dir>/quality_gate-attachment --timeline <build>/timeline.json
 ```
+
+`--timeline` matters only for a video with cards: it tells the gate where they sit, so their stillness is not counted as a freeze.
 
 | Gate code | What viewers feel | Correct fix |
 | --- | --- | --- |
@@ -162,6 +174,7 @@ python3 <skill>/scripts/render.py gate --video <absolute mp4 path> --work <same 
 | `M111` low bitrate notice | possible text softness on dense pages | inspect at 1:1 first; sparse static UIs can compress legitimately. Re-record or re-encode only if text actually smears |
 | `T301` long freeze | "is the player stuck?" | cut waiting ranges or add narration/interaction |
 | `T304` frozen-heavy | sluggish, "laggy" overall | speed up ranges, drop idle segments, give results their own segment |
+| `C301` too many cards | a slideshow, not a demo | shorten the cards or record more of the feature |
 
 `E102` (non-AAC audio) is the one gate code that is a **warning**: the gate still passes and `verify_delivery.py` only prints a WARN.
 
@@ -169,7 +182,9 @@ One artifact has exactly one gated file: record the SHA256 before upload, read i
 
 ### 9. Write the delivery note
 
-In the target project (not inside this skill) write `delivery.md`: environment & versions, real evidence (tickets, request IDs, read-backs), artifact absolute path + duration + resolution + SHA256, the recipe (episode.json, takes, quality report, critic file), the actual commands, what the video proves and what it does not, and status "awaiting user review — not uploaded/published".
+The renderer writes `delivery.generated.md`: artifact facts and SHA256, the version evidence block, one row per segment with its in-video range, source range and playback speed, gate warnings and retime notes. Do not edit it — it is bound into the gate report.
+
+In the target project (not inside this skill) write `delivery.md` on top of it: environment & versions, real evidence (tickets, request IDs, read-backs), artifact absolute path + duration + resolution + SHA256, the recipe (episode.json, takes, quality report, critic file), the actual commands, what the video proves and what it does not, and status "awaiting user review — not uploaded/published".
 
 Reply with the conclusion first, then the artifact path, duration, gate result, SHA256 and the unproven items. Never just "the video is done".
 
@@ -203,25 +218,26 @@ Rules:
 
 - `issue.title`, `issue.severity`, `issue.expected` and `issue.actual` are required; `severity` is one of `blocker`, `critical`, `major`, `minor`; `id`, `environment` and `repro` are optional.
 - At least one segment must carry `phase: "actual"`. Allowed phases: `context`, `repro`, `actual`, `expected`, `impact`; a `phase` on a delivery episode is rejected.
-- The gate report binds a normalized hash of `feedback.json` and the exact bytes of `feedback.generated.md`; `verify_delivery.py` fails a report or markdown edited, missing or misbound after rendering. `feedback.generated.md` is overwritten on every render — add impact and business context in a separate note or an edited copy, never in the generated file.
+- The gate report binds `episode.json`, `timeline.json`, a normalized hash of `feedback.json` and the exact bytes of `feedback.generated.md`; `verify_delivery.py` fails a report or markdown edited, missing or misbound after rendering. `feedback.generated.md` is overwritten on every render — add impact and business context in a separate note or an edited copy, never in the generated file.
 
-Chips, the repro overlay, the generated-file contract and the "report the current build only" rule: [references/episode-and-review.md](references/episode-and-review.md).
+Chips, cards, the repro overlay, the generated-file contract and the "report the current build only" rule: [references/episode-and-review.md](references/episode-and-review.md).
 
 ## Common shapes
 
 - Web/desktop UI: window-level recording cropped to the content area; controls, feedback and read-back all in frame.
 - CLI/API: dedicated terminal recording real commands and real responses; mask tokens, internal hosts and debug logs.
 - Multi-case acceptance (recommended for 2+ cases): one real run per case, one result segment per case; the `case` field becomes the chip, and narration covers only that case's delta and result.
+- Opening and closing: a narrated opening card says what the feature is and for whom; a short closing card states the result. Both are `kind: "card"` segments, and neither counts as footage.
 - Defect report: one continuous take that reproduces the problem, with `phase` segments for repro and actual; the `expected` state can be one narration line or a separate real segment when an earlier build is legitimately available.
 - No visual UI: show real API responses, logs or data — never fabricate a fake UI to stand in for the product.
 - Engineering acceptance: terminal and evidence frames are fine, but lead with the business conclusion.
 
 ## Boundaries
 
-- No static screenshots, animations or mock pages standing in for a real feature; if it doesn't run, fail loud.
+- No static screenshots, animations or mock pages standing in for a real feature; if it doesn't run, fail loud. Cards may state the title and the result, never the feature itself.
 - Never touch production data, send messages or fire notifications to "create a shot"; confirm test targets and recoverability before any real side effect.
 - No public upload or publishing until the user explicitly says "send" — until then, local review only.
 - Never shrink resolution/bitrate/fps to cut file size: deliverables are 1920x1080/30fps; control size with duration; anything re-encoded must re-run the gate, and the posted file must match the gated SHA256.
 - Never end on a waiting state ("creating…/loading…"); end on the result itself.
-- Never loosen the gate profile, delete gate evidence or skip the critic to manufacture a PASS.
+- Never loosen the gate profile, delete gate evidence or fill in `visual-critic.json` without looking at the frames to manufacture a PASS.
 - Company source, customer data, credentials and unreleased business information must not enter public repos or public media directories.
