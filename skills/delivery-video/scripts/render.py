@@ -138,12 +138,13 @@ def chips(item: Planned, feedback: dict | None) -> tuple:
     return SEVERITIES.get((feedback or {}).get("severity", ""), ("", None)), case
 
 
-def active_line(lines: list, starts: list, frame_index: int):
+def subtitle_state(lines: list, starts: list, frame_index: int):
+    """The subtitle line on screen and how many of its chars have been spoken."""
     t = frame_index / FPS * 1000 - LEAD * 1000
     index = bisect.bisect_right(starts, t) - 1
-    if index >= 0 and t <= lines[index][-1]["end_ms"] + 180:
-        return lines[index]
-    return None
+    if index < 0 or t > lines[index][-1]["end_ms"] + 180:
+        return None
+    return lines[index], sum(1 for char in lines[index] if char["start_ms"] <= t)
 
 
 def encode_frames(build: Path, segment_id: str, seconds: float, frames: Iterator[bytes],
@@ -217,9 +218,9 @@ def shot_frames(item: Planned, build: Path, feedback: dict | None, layout: str,
             header(draw, fonts, severity, case, segment["label"])
             if show_repro:
                 repro_panel(draw, fonts, repro_steps)
-            line = active_line(lines, starts, frame_index)
-            if line is not None:
-                subtitle(draw, fonts, line, layout)
+            state = subtitle_state(lines, starts, frame_index)
+            if state is not None:
+                subtitle(draw, fonts, state[0], layout, state[1])
             yield frame.tobytes()
     finally:
         decode.stdout.close()
@@ -241,12 +242,12 @@ def card_frames(item: Planned, feedback: dict | None) -> Iterator[bytes]:
     lines = group_lines(narrated.chars) if narrated else []
     starts = [line[0]["start_ms"] for line in lines]
     for frame_index in range(round(item.seconds * FPS)):
-        line = active_line(lines, starts, frame_index) if lines else None
-        if line is None:
+        state = subtitle_state(lines, starts, frame_index) if lines else None
+        if state is None:
             yield base.tobytes()
             continue
         frame = base.copy()
-        subtitle(ImageDraw.Draw(frame), fonts, line, "fullbleed")
+        subtitle(ImageDraw.Draw(frame), fonts, state[0], "fullbleed", state[1])
         yield frame.tobytes()
 
 

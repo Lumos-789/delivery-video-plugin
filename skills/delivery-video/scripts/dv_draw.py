@@ -66,14 +66,24 @@ def repro_panel(draw, fonts: Fonts, steps: list) -> None:
                   fill=(150, 176, 214), anchor="lm")
 
 
-def subtitle(draw, fonts: Fonts, line: list, layout: str) -> None:
-    text = "".join(char["char"] for char in line)
+SPOKEN = (255, 255, 255)
+UNSAID = (150, 166, 190)
+
+
+def subtitle(draw, fonts: Fonts, line: list, layout: str, spoken: int) -> None:
+    """Bottom subtitle, karaoke style: the first `spoken` chars are lit, the rest wait in grey."""
+    head = "".join(char["char"] for char in line[:spoken])
+    tail = "".join(char["char"] for char in line[spoken:])
+    left = (W - draw.textlength(head + tail, font=fonts.subtitle)) / 2
     if layout == "fullbleed":
-        width = draw.textlength(text, font=fonts.subtitle)
-        draw.rounded_rectangle(
-            ((W - width) / 2 - 26, SUBTITLE_Y - 34, (W + width) / 2 + 26, SUBTITLE_Y + 34),
-            radius=12, fill=(16, 24, 43))
-    draw.text((W / 2, SUBTITLE_Y), text, font=fonts.subtitle, fill="white", anchor="mm")
+        right = W - left
+        draw.rounded_rectangle((left - 26, SUBTITLE_Y - 34, right + 26, SUBTITLE_Y + 34),
+                               radius=12, fill=(16, 24, 43))
+    if head:
+        draw.text((left, SUBTITLE_Y), head, font=fonts.subtitle, fill=SPOKEN, anchor="lm")
+    if tail:
+        draw.text((left + draw.textlength(head, font=fonts.subtitle), SUBTITLE_Y), tail,
+                  font=fonts.subtitle, fill=UNSAID, anchor="lm")
 
 
 NO_LINE_START = set("、。，；：！？）》」』】…·%,.;:!?)")
