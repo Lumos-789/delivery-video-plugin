@@ -20,9 +20,11 @@ from dv_core import (
     EVIDENCE_KINDS,
     FPS,
     H,
+    is_renderer_output,
     LATIN_WEIGHT,
     LAYOUTS,
     NARRATION_SOFT_MAX,
+    OUTPUT_DIRS,
     RATE,
     SEGMENT_ID,
     SEGMENT_KINDS,
@@ -198,6 +200,10 @@ def check_browser_evidence(prefix: str, source: Path, declared: bool,
     port = evidence.get("port")
     if port is not None and (not isinstance(port, int) or isinstance(port, bool) or port <= 0):
         report.errors.append(f"{prefix}: evidence port {port!r} must be a positive integer")
+    if evidence.get("video") not in (None, source.name):
+        report.errors.append(
+            f"{prefix}: evidence video {evidence.get('video')!r} does not match {source.name}"
+        )
     if evidence.get("sha256") != sha256(source):
         report.errors.append(f"{prefix}: evidence sha256 does not match {source.name}")
     check_duration_match(prefix, source, evidence.get("video_s"), report)
@@ -304,8 +310,8 @@ def speed_error(segment: dict, seconds: float) -> str | None:
             f"(interval {end - start:.2f}s, narration {seconds:.2f}s)")
 
 
-def check_tts(build: Path, segment: dict, voice: str, rate: str,
-              report: Validation) -> bool:
+def check_tts(build: Path, segment: dict, voice: str, rate: str, report: Validation,
+              timed: bool = True) -> bool:
     """Return True when nothing usable is cached, so the speed is still unknown."""
     mp3, clock = cache_files(build, segment["id"], segment["text"], voice, rate)
     if not mp3.exists() and not clock.exists():
@@ -321,7 +327,7 @@ def check_tts(build: Path, segment: dict, voice: str, rate: str,
     except RenderError as exc:
         report.errors.append(str(exc))
         return False
-    error = speed_error(segment, seconds)
+    error = speed_error(segment, seconds) if timed else None
     if error:
         report.errors.append(error)
     return False
@@ -466,7 +472,7 @@ def validate_episode(build: Path, episode: dict, report: Validation) -> Validati
     voice_value = episode.get("voice")
     rate_value = episode.get("rate", "+5%")
     voice_ok = isinstance(voice_value, str) and bool(voice_value.strip())
-    rate_ok = isinstance(rate_value, str) and bool(RATE.match(rate_value))
+    rate_ok = isinstance(rate_value, str) and bool(RATE.fullmatch(rate_value))
     if not voice_ok:
         report.errors.append("voice must be a non-empty string")
     if not rate_ok:
@@ -496,7 +502,7 @@ def validate_episode(build: Path, episode: dict, report: Validation) -> Validati
             report.errors.append(f"segments[{index}]: must be an object")
             continue
         segment_id = segment.get("id")
-        if not isinstance(segment_id, str) or not SEGMENT_ID.match(segment_id):
+        if not isinstance(segment_id, str) or not SEGMENT_ID.fullmatch(segment_id):
             report.errors.append(
                 f"segments[{index}]: id must be ASCII letters/digits/_/- and start alphanumeric"
             )
@@ -513,8 +519,11 @@ def validate_episode(build: Path, episode: dict, report: Validation) -> Validati
             )
             continue
         label = segment.get("label")
-        if kind == "shot" and not (isinstance(label, str) and label.strip()):
+        if (kind == "shot" or label is not None) and not (isinstance(label, str) and label.strip()):
             report.errors.append(f"{segment_id}: label must be a non-empty string")
+        case = segment.get("case")
+        if case is not None and not (isinstance(case, str) and case.strip()):
+            report.errors.append(f"{segment_id}: case must be a non-empty string")
         text = segment.get("text")
         text_error = narration_text_error(text, required=kind == "shot")
         if text_error:
@@ -522,8 +531,10 @@ def validate_episode(build: Path, episode: dict, report: Validation) -> Validati
         elif isinstance(text, str):
             texts.append(text)
         if kind == "card":
-            report.errors.extend(card_errors(
-                segment, narrated=isinstance(text, str) and text_error is None))
+            narrated = isinstance(text, str) and text_error is None
+            report.errors.extend(card_errors(segment, narrated=narrated))
+            if narrated and voice_ok and rate_ok:
+                check_tts(build, segment, voice_value, rate_value, report, timed=False)
             continue
 
         shot = segment.get("shot")
@@ -534,8 +545,15 @@ def validate_episode(build: Path, episode: dict, report: Validation) -> Validati
         if shot_path.is_absolute() or ".." in shot_path.parts:
             report.errors.append(f"{segment_id}: shot must stay inside the build directory")
             continue
+        if is_renderer_output(shot_path):
+            report.errors.append(
+                f"{segment_id}: shot {shot} is a file the renderer writes into this build; "
+                f"keep takes out of {', '.join(OUTPUT_DIRS)}/ and away from the output file names"
+            )
+            continue
         source_kind = segment.get("source")
-        if source_kind is not None and source_kind not in ALLOWED_SOURCES:
+        if source_kind is not None and not (isinstance(source_kind, str)
+                                            and source_kind in ALLOWED_SOURCES):
             report.errors.append(
                 f"{segment_id}: source must be one of {sorted(ALLOWED_SOURCES)}, got {source_kind!r}"
             )

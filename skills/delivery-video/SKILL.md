@@ -90,6 +90,7 @@ Use the recording tool you have — see [references/recording.md](references/rec
 - Browser footage recorded by a scripted screencast tool should carry a `<take>.evidence.json` beside it (sha256, size, duration, frames); mark those segments `source: "browser"` — a browser segment without evidence fails preflight and render alike.
 - Dedicated test accounts and data; crop unrelated customer info, contacts, debug panels.
 - Record at 1920x1080 or larger: preflight calls out any take that would be upscaled to the canvas.
+- Keep takes out of the renderer's own files: never named `screen_demo.mp4`, never inside `tts/`, `review/`, `clips/` or `quality_gate/`. Preflight rejects such a take — the renderer would overwrite it.
 - If a take shows a long frozen frame, a blank screen, or captured notifications/privacy content — delete it and re-record. Fix the material, not the threshold.
 
 Recommended for multi-case deliveries: run and record one case at a time. A case should start from a known state and own its takes (for example `F-01-entry.mp4`, `F-02-result.mp4`), so the footage, the case id and the narration all point at the same run. Reset or prepare test data between cases instead of inheriting the previous case's result state, unless the cases genuinely share one continuous flow. Re-record a bad take in full; never splice half of one run with another to make a case look complete. Keep takes and the case list inside the target project's own media/build location, not inside the skill or plugin directory.
@@ -149,7 +150,7 @@ Editing a narration line needs no cache cleanup: narration is cached by content 
 
 Look at what was rendered before claiming anything: `review/sheet_NN.png` shows one row per segment — first, middle and last frame with its in-video range and playback speed; open the full-resolution `review/frames/<id>-start|mid|end.png` whenever a tile raises a question. Check that subtitles are readable and inside the safe area, interface text is legible, the screen matches each spoken claim, and the ending is a result state.
 
-Record the review: fill in `review/critic.draft.json` (score the dimensions, note observations and limitations, set `status`, name the `reviewer`), keep only the frames actually looked at, and save it as `visual-critic.json`. `verify_delivery.py` requires that record and checks it mechanically — bound to this artifact, every segment covered, the last second reviewed.
+Record the review: fill in `review/critic.draft.json` (score the dimensions, note observations and limitations, set `status`, name the `reviewer`), keep only the frames actually looked at, and save it as `visual-critic.json`. `verify_delivery.py` requires that record and checks it mechanically — bound to this artifact, a reviewer named, every dimension scored 0.8 or higher, every segment covered, the last second reviewed, and every frame path it lists still on disk.
 
 ```bash
 python3 <skill>/scripts/verify_delivery.py build/screen_demo-<slug>
@@ -175,8 +176,9 @@ python3 <skill>/scripts/render.py gate --video <absolute mp4 path> --work <same 
 | `T301` long freeze | "is the player stuck?" | cut waiting ranges or add narration/interaction |
 | `T304` frozen-heavy | sluggish, "laggy" overall | speed up ranges, drop idle segments, give results their own segment |
 | `C301` too many cards | a slideshow, not a demo | shorten the cards or record more of the feature |
+| `L101`/`L102` loudness | too quiet or deafening, or not measurable at all | re-render with narration; `L102` means the measurement itself failed and carries the ffmpeg error |
 
-`E102` (non-AAC audio) is the one gate code that is a **warning**: the gate still passes and `verify_delivery.py` only prints a WARN.
+`E102` (non-AAC audio) only ever warns: the gate still passes and `verify_delivery.py` prints a WARN. `T301`, `B101` and `E301` are warnings below their hard thresholds and hard failures above.
 
 One artifact has exactly one gated file: record the SHA256 before upload, read it back after posting. Never re-encode a gated file by hand — that breaks the evidence chain.
 

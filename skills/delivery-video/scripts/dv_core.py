@@ -26,6 +26,8 @@ LAYOUTS = ("banded", "fullbleed")
 NARRATION_SOFT_MAX = 50
 LATIN_WEIGHT = 0.3
 SPEECH_UNITS_PER_SECOND = 4.2
+# Width of a latin character in subtitle lines, in CJK-character units.
+LATIN_WIDTH = 0.55
 MAX_LINE = 24
 MIN_EDGE_TTS = (7, 3, 1)
 INTENTS = {"delivery", "feedback"}
@@ -35,7 +37,9 @@ SEGMENT_KINDS = ("shot", "card")
 CARD_MIN, CARD_MAX, CARD_DEFAULT = 1.0, 8.0, 2.5
 CARD_TITLE_MAX = 40
 CARD_SHARE_MAX = 0.25
-# What a visual review must score, one 0..1 number each.
+# What a visual review must score, one 0..1 number each; "pass" needs every score at
+# or above CRITIC_MIN_SCORE.
+CRITIC_MIN_SCORE = 0.8
 DIMENSIONS = (
     "subtitle_legibility",
     "subtitle_safe_margins",
@@ -65,6 +69,17 @@ RATE = re.compile(r"^[+-]\d+%$")
 EVIDENCE_KINDS = {"cdp-screencast", "browser-demo"}
 DEMO_STAGE_KIND = "demo-stage-recording"
 ALLOWED_SOURCES = {"browser", "window", "demo-stage"}
+CLIPS_DIR = "clips"
+# What the renderer writes itself. A take may not sit there: the renderer would
+# overwrite it. Assembly files start with "_" because a segment id never does.
+OUTPUT_DIRS = ("tts", "review", CLIPS_DIR, "quality_gate")
+OUTPUT_FILES = (
+    "screen_demo.mp4", "screen_demo.rendering.mp4", "timeline.json", "cover.png",
+    "delivery.generated.md", "feedback.json", "feedback.generated.md", "visual-critic.json",
+)
+# A take may deliver this much less than its header promises before the render
+# refuses it; beyond it the last frame would silently freeze.
+PAD_TOLERANCE = 0.5
 
 FONT_CANDIDATES = [
     # macOS. PingFang first; find_font picks its Simplified face by name.
@@ -179,6 +194,19 @@ def content_sha256(payload: object) -> str:
     return hashlib.sha256(canonical).hexdigest()
 
 
+def is_renderer_output(relative: Path) -> bool:
+    """True for a path (relative to the build) that the renderer writes itself."""
+    parts = relative.parts
+    return bool(parts) and (relative.as_posix() in OUTPUT_FILES or parts[0] in OUTPUT_DIRS)
+
+
+def write_text_atomic(path: Path, text: str) -> None:
+    """Write through a sibling temp file and rename: a killed run leaves no half file."""
+    part = path.with_name(path.name + ".tmp")
+    part.write_text(text, encoding="utf-8")
+    os.replace(part, path)
+
+
 def check_tools() -> None:
     missing = [name for name in ("ffmpeg", "ffprobe") if shutil.which(name) is None]
     if missing:
@@ -284,7 +312,7 @@ def feedback_errors(episode: dict, segments: list) -> list[str]:
     """Validate the optional feedback shape; delivery episodes stay unchanged."""
     errors: list[str] = []
     intent = episode.get("intent", "delivery")
-    if intent not in INTENTS:
+    if not isinstance(intent, str) or intent not in INTENTS:
         errors.append(f"intent must be one of {sorted(INTENTS)}, got {intent!r}")
         return errors
     issue = episode.get("issue")
@@ -321,7 +349,7 @@ def feedback_errors(episode: dict, segments: list) -> list[str]:
         phase = segment.get("phase")
         if phase is None:
             continue
-        if phase not in PHASE_LABELS:
+        if not isinstance(phase, str) or phase not in PHASE_LABELS:
             errors.append(
                 f"{segment.get('id')}: phase must be one of {sorted(PHASE_LABELS)}, got {phase!r}"
             )

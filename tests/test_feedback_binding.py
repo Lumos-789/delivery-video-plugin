@@ -34,9 +34,9 @@ SEGMENTS = [
      "start": 1.0, "end": 1.8},
 ]
 TIMELINE = [
-    {"id": "01-repro", "start": 0.0, "end": 1.0,
+    {"id": "01-repro", "kind": "shot", "start": 0.0, "end": 1.0, "speed": 0.7,
      "source": "screen_demo.mp4", "source_start": 0.1, "source_end": 0.8},
-    {"id": "02-actual", "start": 1.0, "end": 2.0,
+    {"id": "02-actual", "kind": "shot", "start": 1.0, "end": 2.0, "speed": 0.7,
      "source": "screen_demo.mp4", "source_start": 1.0, "source_end": 1.8},
 ]
 

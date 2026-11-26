@@ -6,7 +6,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from dv_core import DIMENSIONS, find_font, run
+from dv_core import DIMENSIONS, find_font, run, write_text_atomic
 from dv_notes import format_clock
 
 TILE = (480, 270)
@@ -83,5 +83,5 @@ def build_review(build: Path, video: Path, timeline: list, digest: str) -> Path:
         "video_sha256": digest,
     }
     path = review / "critic.draft.json"
-    path.write_text(json.dumps(draft, ensure_ascii=False, indent=2), encoding="utf-8")
+    write_text_atomic(path, json.dumps(draft, ensure_ascii=False, indent=2))
     return path

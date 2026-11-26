@@ -17,6 +17,7 @@ from pathlib import Path
 
 from dv_core import (
     FPS,
+    LATIN_WIDTH,
     LEAD,
     MAX_LINE,
     TAIL,
@@ -163,9 +164,8 @@ def align_clock(text: str, words: list[dict]) -> list[dict]:
         for offset, char in enumerate(token):
             char_start = round(start + (end - start) * offset / len(token))
             char_end = round(start + (end - start) * (offset + 1) / len(token))
-            chars.append(
-                {"char": char, "start_ms": char_start, "end_ms": char_end}
-            )
+            chars.append({"char": char, "start_ms": char_start, "end_ms": char_end,
+                          "word": offset == 0})
         cursor = index + len(token)
         previous_end = end
 
@@ -177,20 +177,38 @@ def align_clock(text: str, words: list[dict]) -> list[dict]:
     return chars
 
 
+def line_weight(line: list) -> float:
+    """Width in subtitle units: a CJK char is one, a latin char a bit over half."""
+    return sum(LATIN_WIDTH if char["char"].isascii() else 1.0 for char in line)
+
+
 def group_lines(chars: list[dict], max_line: int = MAX_LINE) -> list[list[dict]]:
-    """Split word-clock chars into subtitle lines; keep latin words unbroken."""
+    """Split word-clock chars into subtitle lines. No spoken word is cut in half:
+    a line ends after sentence punctuation, at soft punctuation once it is long,
+    or when the length cap moves the word being spoken to the next line. A Latin
+    run is broken only when wider than a whole line."""
     lines, current = [], []
     for index, char in enumerate(chars):
         current.append(char)
         nxt = chars[index + 1]["char"] if index + 1 < len(chars) else ""
         if char["char"].isascii() and char["char"].isalnum() \
                 and nxt.isascii() and nxt.isalnum():
+            if line_weight(current) >= max_line + 2:
+                lines.append(current)
+                current = []
             continue
-        if (char["char"] in BREAK_AFTER
-                or len(current) >= max_line + 2
-                or (len(current) >= max_line and char["char"] in SOFT_BREAK)):
-            lines.append(current)
-            current = []
+        sentence_end = char["char"] in BREAK_AFTER
+        soft = char["char"] in SOFT_BREAK
+        if sentence_end or len(current) >= max_line + 2 \
+                or (len(current) >= max_line and soft):
+            cut = len(current)
+            if not sentence_end and not soft:
+                word_starts = [position for position, item in enumerate(current)
+                               if item.get("word")]
+                if word_starts and word_starts[-1] > 0:
+                    cut = word_starts[-1]
+            lines.append(current[:cut])
+            current = current[cut:]
     if current:
         lines.append(current)
     return lines

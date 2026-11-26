@@ -25,15 +25,18 @@ import asyncio
 import bisect
 import dataclasses
 import json
+import os
 import subprocess
 import tempfile
 from collections.abc import Callable, Iterator
 
 from dv_core import (
     CARD_DEFAULT,
+    CLIPS_DIR,
     FPS,
     H,
     LEAD,
+    PAD_TOLERANCE,
     PHASE_LABELS,
     SEVERITIES,
     SPEED_NOTICE,
@@ -45,6 +48,7 @@ from dv_core import (
     duration,
     run,
     sha256,
+    write_text_atomic,
 )
 from dv_draw import card_frame, header, load_fonts, repro_panel, subtitle
 from dv_episode import Source, speed_error, validate
@@ -56,8 +60,10 @@ from dv_notes import (
     write_feedback_report,
     write_report,
 )
-from dv_tts import Narration, group_lines, synth
 from dv_review import build_review
+from dv_tts import Narration, group_lines, synth
+
+STAGING_ARTIFACT = "screen_demo.rendering.mp4"
 
 
 def segment_filter(crop: list[int] | None, layout: str, speed: float,
@@ -80,7 +86,8 @@ def segment_filter(crop: list[int] | None, layout: str, speed: float,
     parts.append(
         f"setpts={speed}*(PTS-STARTPTS),{box}:force_original_aspect_ratio=decrease"
         f":flags=lanczos,eq=brightness=-0.035,{pad}:color=0x10182b")
-    parts.append(f"fps={FPS},tpad=stop_mode=clone:stop_duration={seconds}")
+    # tpad only covers frame-count rounding; a take that ends early still falls short here
+    parts.append(f"fps={FPS},tpad=stop_mode=clone:stop_duration={PAD_TOLERANCE}")
     return ",".join(parts)
 
 
@@ -96,6 +103,8 @@ class Planned:
     source: Source | None = None
     narration: Narration | None = None
     speed: float | None = None
+    take_digest: str | None = None
+    evidence_digest: str | None = None
 
     @property
     def kind(self) -> str:
@@ -105,8 +114,10 @@ class Planned:
 def plan_segments(build: Path, segments: list, sources: dict, voice: str,
                   rate: str) -> list:
     """Phase 1: every narration is synthesized and every duration rule checked
-    before a single frame is rendered, so a bad segment costs no render time."""
+    before a single frame is rendered, so a bad segment costs no render time.
+    Take fingerprints are taken here, before anything could touch a take."""
     planned, problems = [], []
+    take_digests: dict = {}
     for segment in segments:
         narration = None
         if segment.get("text"):
@@ -120,9 +131,15 @@ def plan_segments(build: Path, segments: list, sources: dict, voice: str,
         if error:
             problems.append(error)
             continue
+        source = sources[segment["id"]]
+        if source.path not in take_digests:
+            evidence = source.path.with_suffix(".evidence.json")
+            take_digests[source.path] = (
+                sha256(source.path), sha256(evidence) if evidence.is_file() else None)
+        take_digest, evidence_digest = take_digests[source.path]
         span = float(segment["end"]) - float(segment["start"])
-        planned.append(Planned(segment, narration.seconds, sources[segment["id"]],
-                               narration, span / narration.seconds))
+        planned.append(Planned(segment, narration.seconds, source, narration,
+                               span / narration.seconds, take_digest, evidence_digest))
     if problems:
         raise RenderError(
             "nothing rendered yet; fix these segments first:\n"
@@ -149,11 +166,14 @@ def subtitle_state(lines: list, starts: list, frame_index: int):
 
 def encode_frames(build: Path, segment_id: str, seconds: float, frames: Iterator[bytes],
                   decode_error: Callable[[], str]) -> Path:
-    """Feed raw RGB frames to one ffmpeg encoder.
+    """Feed raw RGB frames to one ffmpeg encoder, writing clips/<id>.mp4.
 
     stderr goes to a temp file: an unread stderr PIPE deadlocks past 64KB.
+    A failure inside the frame source is reported together with both ffmpeg logs.
     """
-    output = build / f"{segment_id}.mp4"
+    clips = build / CLIPS_DIR
+    clips.mkdir(exist_ok=True)
+    output = clips / f"{segment_id}.mp4"
     encode_log = tempfile.TemporaryFile()
     encode = subprocess.Popen(
         ["ffmpeg", "-nostdin", "-y", "-v", "error", "-f", "rawvideo", "-pix_fmt", "rgb24",
@@ -161,10 +181,12 @@ def encode_frames(build: Path, segment_id: str, seconds: float, frames: Iterator
          "-c:v", "libx264", "-preset", "fast", "-crf", "19", "-pix_fmt", "yuv420p",
          str(output)],
         stdin=subprocess.PIPE, stderr=encode_log)
-    broken = False
+    failure, broken = "", False
     try:
         for content in frames:
             encode.stdin.write(content)
+    except RenderError as exc:
+        failure = str(exc)
     except BrokenPipeError:
         broken = True
     finally:
@@ -176,8 +198,9 @@ def encode_frames(build: Path, segment_id: str, seconds: float, frames: Iterator
         encode_log.seek(0)
         error = encode_log.read().decode(errors="replace")
         encode_log.close()
-    if broken or encode.returncode or decode_error():
-        raise RenderError(f"video encoding failed:\n{decode_error()}\n{error}")
+    if failure or broken or encode.returncode or decode_error():
+        parts = [failure or "video encoding failed:", decode_error(), error]
+        raise RenderError("\n".join(part for part in parts if part))
     return output
 
 
@@ -206,13 +229,15 @@ def shot_frames(item: Planned, build: Path, feedback: dict | None, layout: str,
          "-i", str(source.path), "-vf", vf, "-frames:v", str(round(item.seconds * FPS)),
          "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1"],
         stdout=subprocess.PIPE, stderr=decode_log)
+    frame_count = round(item.seconds * FPS)
     try:
-        for frame_index in range(round(item.seconds * FPS)):
+        for frame_index in range(frame_count):
             content = decode.stdout.read(W * H * 3)
             if len(content) != W * H * 3:
                 raise RenderError(
-                    f"recording decoder ended at frame {frame_index}: "
-                    "interval beyond the source")
+                    f"{segment['id']}: recording ends after {frame_index} of {frame_count} "
+                    "frames; the take is shorter than its header says (truncated recording?) "
+                    "-- re-record the take or end the segment earlier")
             frame = Image.frombytes("RGB", (W, H), content)
             draw = ImageDraw.Draw(frame)
             header(draw, fonts, severity, case, segment["label"])
@@ -237,7 +262,7 @@ def card_frames(item: Planned, feedback: dict | None) -> Iterator[bytes]:
     fonts = load_fonts()
     severity, case = chips(item, feedback)
     title = segment.get("title") or segment["text"]
-    base = card_frame(fonts, title, severity, case, segment.get("label", ""))
+    base = card_frame(fonts, title, severity, case, segment.get("label") or "")
     narrated = item.narration if segment.get("text") not in (None, title) else None
     lines = group_lines(narrated.chars) if narrated else []
     starts = [line[0]["start_ms"] for line in lines]
@@ -253,7 +278,7 @@ def card_frames(item: Planned, feedback: dict | None) -> Iterator[bytes]:
 
 def write_audio(item: Planned, build: Path) -> Path:
     """Narration for narrated segments, digital silence for silent cards."""
-    wav = build / f"{item.segment['id']}.wav"
+    wav = build / CLIPS_DIR / f"{item.segment['id']}.wav"
     if item.narration is None:
         run(["ffmpeg", "-nostdin", "-y", "-v", "error", "-f", "lavfi", "-i",
              "anullsrc=r=44100:cl=stereo", "-t", str(item.seconds),
@@ -281,7 +306,7 @@ def render_item(item: Planned, build: Path, feedback: dict | None = None,
     return clip
 
 
-def timeline_entry(item: Planned, start: float, take_digest: str | None) -> dict:
+def timeline_entry(item: Planned, start: float) -> dict:
     segment = item.segment
     entry = {"id": segment["id"], "kind": item.kind,
              "start": round(start, 3), "end": round(start + item.seconds, 3)}
@@ -296,8 +321,10 @@ def timeline_entry(item: Planned, start: float, take_digest: str | None) -> dict
     entry.update({
         "source": segment["shot"],
         "source_start": segment["start"], "source_end": segment["end"],
-        "speed": round(item.speed, 3), "source_sha256": take_digest,
+        "speed": round(item.speed, 3), "source_sha256": item.take_digest,
     })
+    if item.evidence_digest:
+        entry["source_evidence_sha256"] = item.evidence_digest
     return entry
 
 
@@ -306,7 +333,7 @@ def loudnorm_finalize(raw: Path, final: Path) -> None:
     probe = subprocess.run(
         ["ffmpeg", "-nostdin", "-i", str(raw), "-af",
          "loudnorm=I=-14:TP=-1.5:LRA=11:print_format=json", "-f", "null", "-"],
-        capture_output=True, text=True)
+        capture_output=True, text=True, encoding="utf-8", errors="replace")
     if probe.returncode:
         raise RenderError(f"loudness measurement failed:\n{probe.stderr[-1000:]}")
     meas = json.loads(probe.stderr[probe.stderr.rindex("{"):probe.stderr.rindex("}") + 1])
@@ -315,6 +342,38 @@ def loudnorm_finalize(raw: Path, final: Path) -> None:
           f"measured_LRA={meas['input_lra']}:measured_thresh={meas['input_thresh']}:linear=true")
     run(["ffmpeg", "-nostdin", "-y", "-v", "error", "-i", str(raw), "-af", af,
          "-ar", "44100", "-ac", "2", "-c:a", "aac", "-b:a", "192k", "-c:v", "copy", str(final)])
+
+
+def assemble(build: Path, clips: list, offset: float) -> Path:
+    """Concatenate the clips, mux the narration and normalize loudness.
+
+    The result is staged under a temporary name and renamed over
+    screen_demo.mp4 only once it is complete, so an interrupted re-render never
+    destroys the previous gated artifact.
+    """
+    parts = build / CLIPS_DIR
+    video_list = parts / "_video.txt"
+    write_text_atomic(video_list, "".join(f"file '{clip.name}'\n" for clip in clips))
+    picture = parts / "_picture.mp4"
+    run(["ffmpeg", "-nostdin", "-y", "-v", "error", "-f", "concat", "-safe", "0",
+         "-i", str(video_list), "-c", "copy", "-movflags", "+faststart", str(picture)])
+    audio_list = parts / "_audio.txt"
+    write_text_atomic(audio_list, "".join(f"file '{clip.stem}.wav'\n" for clip in clips))
+    narration_wav = parts / "_voice.wav"
+    run(["ffmpeg", "-nostdin", "-y", "-v", "error", "-f", "concat", "-safe", "0",
+         "-i", str(audio_list), "-c:a", "pcm_s16le", str(narration_wav)])
+    assembled = parts / "_assembled.mp4"
+    run(["ffmpeg", "-nostdin", "-y", "-v", "error", "-i", str(picture), "-i", str(narration_wav),
+         "-map", "0:v", "-map", "1:a", "-c:v", "copy", "-c:a", "aac",
+         "-ar", "44100", "-ac", "2", "-t", str(offset), str(assembled)])
+    staging = build / STAGING_ARTIFACT
+    loudnorm_finalize(assembled, staging)
+    measured = duration(staging)
+    if abs(measured - offset) > 0.15:
+        staging.unlink()
+        raise RenderError(f"final duration {measured:.3f}s != expected {offset:.3f}s")
+    os.replace(staging, build / "screen_demo.mp4")
+    return build / "screen_demo.mp4"
 
 
 def cmd_render(build: Path) -> int:
@@ -335,50 +394,22 @@ def cmd_render(build: Path) -> int:
 
     planned = plan_segments(build, segments, validation.sources, voice, rate)
     tracks, timeline, retimed, offset = [], [], [], 0.0
-    take_digests: dict = {}
     for item in planned:
         tracks.append(render_item(item, build, feedback, layout))
-        take_digest = None
-        if item.source is not None:
-            if item.source.path not in take_digests:
-                take_digests[item.source.path] = sha256(item.source.path)
-            take_digest = take_digests[item.source.path]
-        timeline.append(timeline_entry(item, offset, take_digest))
+        timeline.append(timeline_entry(item, offset))
         if item.speed is not None and not SPEED_NOTICE[0] <= item.speed <= SPEED_NOTICE[1]:
             retimed.append({"id": item.segment["id"], "speed": round(item.speed, 3)})
+            note = "feedback.generated.md" if feedback is not None else "delivery.generated.md"
             print(f"WARN {item.segment['id']}: playback {item.speed:.2f}x -- the footage is "
                   f"{'fast-forwarded' if item.speed > 1 else 'slowed down'}; "
-                  "it is disclosed in delivery.generated.md", flush=True)
+                  f"it is disclosed in {note}", flush=True)
         offset += item.seconds
 
-    concat = build / "clips.txt"
-    concat.write_text("".join(f"file '{p.name}'\n" for p in tracks), encoding="utf-8")
-    picture = build / "picture.mp4"
-    run(["ffmpeg", "-nostdin", "-y", "-v", "error", "-f", "concat", "-safe", "0",
-         "-i", str(concat), "-c", "copy", "-movflags", "+faststart", str(picture)])
-    voice_list = build / "voice-clips.txt"
-    voice_list.write_text(
-        "".join(f"file '{p.with_suffix('.wav').name}'\n" for p in tracks),
-        encoding="utf-8",
-    )
-    narration_wav = build / "voice.wav"
-    run(["ffmpeg", "-nostdin", "-y", "-v", "error", "-f", "concat", "-safe", "0",
-         "-i", str(voice_list), "-c:a", "pcm_s16le", str(narration_wav)])
-    assembled = build / "assembled.mp4"
-    run(["ffmpeg", "-nostdin", "-y", "-v", "error", "-i", str(picture), "-i", str(narration_wav),
-         "-map", "0:v", "-map", "1:a", "-c:v", "copy", "-c:a", "aac",
-         "-ar", "44100", "-ac", "2", "-t", str(offset), str(assembled)])
-    final = build / "screen_demo.mp4"
-    loudnorm_finalize(assembled, final)
-    if abs(duration(final) - offset) > 0.15:
-        raise RenderError(f"final duration {duration(final):.3f}s != expected {offset:.3f}s")
+    final = assemble(build, tracks, offset)
     run(["ffmpeg", "-nostdin", "-y", "-v", "error", "-ss", "2", "-i", str(final),
          "-frames:v", "1", str(build / "cover.png")])
     timeline_path = build / "timeline.json"
-    timeline_path.write_text(
-        json.dumps(timeline, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+    write_text_atomic(timeline_path, json.dumps(timeline, ensure_ascii=False, indent=2))
     cards = [{"start": item["start"], "end": item["end"]}
              for item in timeline if item["kind"] == "card"]
     report = quality_gate(final, build / "quality_gate", cards)
@@ -386,7 +417,8 @@ def cmd_render(build: Path) -> int:
     report["timeline"] = {"file": "timeline.json", "sha256": sha256(timeline_path)}
     if feedback is not None:
         feedback_report_path = write_feedback_report(build, feedback, segments, report)
-        markdown_path = write_feedback_markdown(build, feedback, segments, timeline, report)
+        markdown_path = write_feedback_markdown(build, feedback, segments, timeline, report,
+                                                retimed)
         binding = bind_feedback_evidence(
             build / "quality_gate" / "report.json",
             report,
@@ -455,6 +487,10 @@ def cmd_gate(video: Path, work: Path, timeline: Path | None = None) -> int:
     if timeline is None and flagged & {"B101", "T301", "T304", "E301"}:
         print("NOTE: if the flagged span sits inside a title or closing card, pass "
               "--timeline <build>/timeline.json", flush=True)
+    if timeline is not None and report.get("exempt"):
+        print(f"NOTE: {len(report['exempt']['intervals'])} card interval(s) were taken from "
+              f"{timeline.name}; the gate cannot prove that timeline belongs to this video",
+              flush=True)
     return 0 if report["status"] == "pass" else 1
 
 

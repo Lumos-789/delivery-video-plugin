@@ -19,7 +19,7 @@
 | `segments[].case` | no | acceptance-case chip shown top-left, e.g. `D-02`; recommended when the video covers 2+ cases |
 | `segments[].phase` | for feedback | `context`, `repro`, `actual`, `expected` or `impact`; becomes the second chip |
 | `segments[].label` | shots | short top-left label; optional on cards |
-| `segments[].shot` | shots | recording file relative to the build directory; it must stay inside it |
+| `segments[].shot` | shots | recording file relative to the build directory; it must stay inside it and out of the renderer's own files (`screen_demo.mp4`, `tts/`, `review/`, `clips/`, `quality_gate/`) |
 | `segments[].start` | shots | range start in the source, seconds |
 | `segments[].end` | shots | range end; must exceed `start` and not run past the take |
 | `segments[].source` | shots | `browser` requires `<shot-stem>.evidence.json`; `demo-stage` requires headless-stage evidence; window recordings may say `window` or omit |
@@ -68,7 +68,7 @@ delivery episode is rejected, so the two modes cannot be mixed by accident.
 | --- | --- |
 | `delivery.generated.md` | delivery episodes: artifact facts and SHA256, the `evidence` block, one row per segment with in-video range, source range and playback speed, gate warnings, retime notes |
 | `feedback.json` | feedback episodes: machine-readable issue, segment phases and artifact SHA256 |
-| `feedback.generated.md` | feedback episodes: ticket-ready draft with expected/actual, numbered repro steps, per-segment timing and source range, artifact hash and gate result |
+| `feedback.generated.md` | feedback episodes: ticket-ready draft with expected/actual, numbered repro steps, per-segment timing, source range and playback speed, artifact hash and gate result |
 
 The generated markdown is rewritten on every render and bound into the gate report — edit a
 copy or keep additions in a separate note. The feedback draft deliberately does not claim a
@@ -107,9 +107,10 @@ All narration is synthesized, and every segment's speed checked, before the firs
 
 | File | Contents |
 | --- | --- |
-| `screen_demo.mp4` | the artifact: 1920x1080, 30fps, h264, narrated, loudness-normalized |
-| `timeline.json` | per segment: kind, in-video range, label and case; shots add the source file, source range, playback speed and the take's SHA256; cards add the title |
+| `screen_demo.mp4` | the artifact: 1920x1080, 30fps, h264, narrated, loudness-normalized. Written under a staging name and renamed once complete, so an interrupted re-render leaves the previous artifact intact |
+| `timeline.json` | per segment: kind, in-video range, label and case; shots add the source file, source range, playback speed, the take's SHA256 and, for an evidence-backed take, the evidence file's SHA256; cards add the title |
 | `cover.png` | the frame at 2s |
+| `clips/` | the per-segment clips and the assembly files (named with a leading `_`); safe to delete |
 | `review/frames/<id>-start\|mid\|end.png` | full-resolution first, middle and last frame of every segment |
 | `review/sheet_NN.png` | contact sheets, six segments per page, captioned with range and playback speed |
 | `review/critic.draft.json` | skeleton of the visual review, bound to the artifact SHA256 |
@@ -148,7 +149,7 @@ The record that the frames were looked at. Start from `review/critic.draft.json`
 }
 ```
 
-`verify_delivery.py` requires the file and checks it: `status` is `pass`, `critical` is empty, `video_sha256` is the current artifact, `reviewer` is named, each of the five dimensions is a number from 0 to 1, every segment has a reviewed frame inside its range, and the first and the last second were each reviewed. For an external delivery the reviewer must be someone who has not seen the maker's conclusions — a second model or window working from the packet.
+`verify_delivery.py` requires the file and checks it: `status` is `pass`, `critical` is empty, `video_sha256` is the current artifact, `reviewer` is named, each of the five dimensions is a number from 0.8 to 1 (a `pass` with a lower score is a contradiction — record the problem under `critical` instead), a `frame` path, when given, still exists, every segment has a reviewed frame inside its range, and the first and the last second were each reviewed. For an external delivery the reviewer must be someone who has not seen the maker's conclusions — a second model or window working from the packet.
 
 ## Reading the quality report
 
@@ -159,7 +160,7 @@ The record that the frames were looked at. Start from `review/critic.draft.json`
 - `warnings` — actionable anomalies such as `E301` (long silence); keep them visible.
 - `notices` — advisory measurements (e.g. bitrate density). They do not reduce the score; the gate-code table in [SKILL.md](../SKILL.md) says what to do with each code.
 - `exempt` — the card intervals left out of the black, freeze and silence scans.
-- The bindings: `video_sha256`, `episode`, `timeline` and `delivery` (or `feedback`). `verify_delivery.py` recomputes every one of them and fails when `episode.json`, `timeline.json`, a take or the generated note changed after rendering. A report without the `episode` and `timeline` bindings — from an older version or from the attachment gate — fails too.
+- The bindings: `video_sha256`, `episode`, `timeline` and `delivery` (or `feedback`). `verify_delivery.py` recomputes every one of them and fails when `episode.json`, `timeline.json`, a take, a take's evidence file or the generated note changed after rendering; it also re-applies the preflight evidence rules to every evidence-backed take. A report without the `episode` and `timeline` bindings — from an older version or from the attachment gate — fails too, as does a delivery report without its `delivery` binding.
 
 For an attachment gate on an arbitrary mp4, run `render.py gate --video <mp4> --work <dir>` — it writes its own report; add `--timeline <build>/timeline.json` when that video contains cards.
 
@@ -221,6 +222,10 @@ Awaiting user review — not uploaded / not published.
 | `missing real recording` | `shot` path wrong or file not in the build directory |
 | `invalid recording interval` | `start/end` beyond the source, or the cut lands mid-action |
 | `recording speed outside 0.3x..3x` | shorten narration, widen the range or split the segment; every such segment is listed before anything renders |
+| `recording ends after N of M frames` | the take is truncated — its header promises more than the file holds; re-record it or end the segment earlier |
+| `shot … is a file the renderer writes` | the take sits where the renderer writes; move it out of `tts/`, `review/`, `clips/`, `quality_gate/` or away from `screen_demo.mp4` |
+| `L102` | the loudness measurement itself failed; the message carries the ffmpeg error |
+| `… below the 0.8 pass floor` | the review scored a dimension under 0.8 and still said pass; fix the material or list it under `critical` |
 | `narration synthesis failed for <id>` | the TTS service or the network failed; finished segments stay cached, so rerun |
 | `corrupt TTS clock cache` | delete the named file; the line is synthesized again |
 | `legacy TTS cache files are ignored` | files from an older version; delete them |

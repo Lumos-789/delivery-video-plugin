@@ -155,5 +155,60 @@ class CardRuleTests(unittest.TestCase):
                       self.errors(title="第一行\n第二行")[0])
 
 
+class TakePlacementTests(unittest.TestCase):
+    def errors(self, shot: str) -> list[str]:
+        return errors_for(Path("."), {"voice": "v", "segments": [
+            {"id": "s1", "label": "l", "text": "旁白", "shot": shot, "start": 0, "end": 1}]})
+
+    def test_a_take_may_not_sit_where_the_renderer_writes(self):
+        for shot in ("screen_demo.mp4", "screen_demo.rendering.mp4", "tts/x.mp4",
+                     "review/x.mp4", "clips/x.mp4", "quality_gate/x.mp4"):
+            with self.subTest(shot=shot):
+                self.assertTrue(any("is a file the renderer writes" in error
+                                    for error in self.errors(shot)))
+
+    def test_ordinary_take_paths_are_not_mistaken_for_renderer_outputs(self):
+        self.assertFalse(any("renderer writes" in error for error in self.errors("takes/reviewed.mp4")))
+
+    def test_ids_and_rates_reject_a_trailing_newline(self):
+        errors = errors_for(Path("."), {"voice": "v", "segments": [{"id": "ok\n"}]})
+        self.assertTrue(any("id must be ASCII" in error for error in errors), errors)
+        errors = errors_for(Path("."), {"voice": "v", "rate": "+5%\n", "segments": []})
+        self.assertTrue(any("rate must look like" in error for error in errors), errors)
+
+
+class FieldTypeTests(unittest.TestCase):
+    def errors(self, segment: dict, **episode) -> list[str]:
+        return errors_for(Path("."), dict(episode, voice="v", segments=[segment]))
+
+    def test_case_must_be_a_non_empty_string(self):
+        for value in (123, ["F-01"], ""):
+            with self.subTest(case=value):
+                errors = self.errors({"id": "s1", "label": "l", "text": "旁白", "shot": "t.mp4",
+                                      "start": 0, "end": 1, "case": value})
+                self.assertTrue(any("case must be" in error for error in errors), errors)
+        self.assertFalse(any("case must be" in error for error in
+                             self.errors({"id": "s1", "case": "F-01"})))
+
+    def test_a_card_label_must_be_a_string_when_present(self):
+        for value in (5, ["x"], ""):
+            with self.subTest(label=value):
+                errors = self.errors({"id": "c1", "kind": "card", "title": "标题", "label": value})
+                self.assertTrue(any("label must be" in error for error in errors), errors)
+
+    def test_source_rejects_non_strings_without_crashing(self):
+        for value in ([], {}, 5, True):
+            with self.subTest(source=value):
+                errors = self.errors({"id": "s1", "label": "l", "text": "旁白", "shot": "t.mp4",
+                                      "start": 0, "end": 1, "source": value})
+                self.assertTrue(any("source must be" in error for error in errors), errors)
+
+    def test_phase_and_intent_reject_non_strings_without_crashing(self):
+        issue = {"title": "t", "severity": "major", "expected": "e", "actual": "a"}
+        errors = self.errors({"id": "a1", "phase": [], "text": "旁白"}, intent="feedback",
+                             issue=issue)
+        self.assertTrue(any("phase must be" in error for error in errors), errors)
+        errors = errors_for(Path("."), {"voice": "v", "intent": [], "segments": [{"id": "a1"}]})
+        self.assertTrue(any("intent must be" in error for error in errors), errors)
 if __name__ == "__main__":
     unittest.main()

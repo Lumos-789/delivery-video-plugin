@@ -30,7 +30,7 @@ def main() -> int:
 
     build_path = args.build.expanduser()
     report = validate(build_path.resolve())
-    if build_path.is_dir() and not BUILD_NAME.match(build_path.name):
+    if build_path.is_dir() and not BUILD_NAME.fullmatch(build_path.name):
         report.errors.append(
             f"build directory {build_path.name!r} is rejected by preflight "
             "(render.py itself accepts any directory name); "

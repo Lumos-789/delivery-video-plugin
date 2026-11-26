@@ -58,6 +58,39 @@ Behavior changes to know before upgrading:
 - New warnings for narration longer than about 50 spoken characters and for takes smaller
   than the canvas.
 
+### After the independent audit
+
+- A segment id matching its take file no longer destroys the take. Per-segment clips and
+  the assembly files live in `clips/` (assembly files start with `_`, which no segment id
+  can), take fingerprints are taken before anything is rendered, and preflight rejects a
+  take that sits where the renderer writes (`screen_demo.mp4`, `tts/`, `review/`, `clips/`,
+  `quality_gate/`).
+- The final artifact is staged and renamed once complete, so an interrupted re-render
+  leaves the previous artifact intact; timeline, report, notes and the review draft are
+  written atomically.
+- A take that ends earlier than its header says fails with the real reason instead of
+  freezing its last frame; a failed frame source reports both ffmpeg logs.
+- Segment ids, rates and build-directory names must match as a whole (a trailing newline
+  no longer slips through).
+- `case`, `label`, `source`, `phase` and `intent` must be strings; a wrong type is a
+  `FAIL:` line instead of a crash after synthesis or a traceback.
+- Feedback videos disclose playback speed and retime notes too, and the on-screen retime
+  warning names the note that actually exists.
+- `verify_delivery.py` requires the `delivery` binding, re-applies the preflight evidence
+  rules to evidence-backed takes and checks the evidence fingerprint recorded in the
+  timeline.
+- A visual review needs every dimension at 0.8 or higher, and any `frame` path it lists
+  must exist.
+- `L102`: a failed loudness measurement is a hard failure instead of a pass with
+  `loudness_lufs: null`.
+- A narrated card checks its cached narration in preflight like a shot does.
+- Repro steps are cut to the panel width by measured pixels; a Latin run wider than a
+  subtitle line is broken instead of running off the canvas.
+- `render.py gate --timeline` says that it cannot prove the timeline belongs to the video.
+- Tests skip instead of erroring when edge-tts or Pillow is missing from the interpreter.
+- Subtitle lines break at spoken-word boundaries: when the length cap falls inside a
+  word, the word moves to the next line (checked against the live edge-tts service).
+
 ### Fixes
 
 - Subtitles and chips use the Simplified-Chinese font face. Face 0 of the macOS collections
@@ -68,7 +101,7 @@ Behavior changes to know before upgrading:
 - `package.json` `files` lists the whole `scripts/` directory.
 - `render.py` is split into `dv_core`, `dv_episode`, `dv_tts`, `dv_gate`, `dv_draw`,
   `dv_notes` and `dv_review` behind the three entry points. Tests grew from 31 to 106,
-  including an offline end-to-end render.
+  including an offline end-to-end render; 130 after the audit round.
 
 ## 1.2.5
 

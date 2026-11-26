@@ -55,9 +55,10 @@ def ffmpeg(*args: str) -> None:
 
 
 def make_take(path: Path, seconds: int = 12, pattern: str = "testsrc2",
-               size: str = "1920x1080") -> None:
+               size: str = "1920x1080", faststart: bool = False) -> None:
     ffmpeg("-f", "lavfi", "-i", f"{pattern}=s={size}:r=30:d={seconds}",
-           "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p", str(path))
+           "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
+           *(["-movflags", "+faststart"] if faststart else []), str(path))
 
 
 def seed_narration(build: Path, segment: dict, seconds: float = 2.0) -> None:
@@ -104,6 +105,48 @@ def card_episode() -> dict:
         {"id": "99-close", "kind": "card", "title": "两个用例全部通过，等待验收", "duration": 1.5},
     ]
     return episode
+
+
+def feedback_episode() -> dict:
+    return {
+        "intent": "feedback", "voice": VOICE, "rate": "+5%",
+        "issue": {"id": "BUG-7", "title": "保存后列表仍显示旧总额", "severity": "major",
+                  "environment": "staging", "expected": "保存后立即显示新总额",
+                  "actual": "列表仍是旧总额，要整页刷新才更新",
+                  "repro": ["打开订单详情", "把金额改为 1200", "保存并返回列表"]},
+        "segments": [
+            {"id": "01-repro", "phase": "repro", "label": "复现", "shot": "take.mp4",
+             "start": 0.5, "end": 7.5, "text": "照着三个步骤操作，保存后回到列表。"},
+            {"id": "02-actual", "phase": "actual", "label": "现象", "shot": "take.mp4",
+             "start": 4.0, "end": 6.6, "text": "列表这里仍然是旧总额。"},
+            {"id": "99-impact", "phase": "impact", "kind": "card", "duration": 1.5,
+             "title": "对账金额与实际不一致"},
+        ],
+    }
+
+
+def demo_stage_episode() -> dict:
+    episode = delivery_episode()
+    for segment in episode["segments"]:
+        segment["source"] = "demo-stage"
+    return episode
+
+
+def write_demo_stage_evidence(build: Path, take: Path) -> Path:
+    probe = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+                            "stream=nb_frames:format=duration", "-of", "json", str(take)],
+                           capture_output=True, text=True, stdin=subprocess.DEVNULL).stdout
+    info = json.loads(probe)
+    path = take.with_suffix(".evidence.json")
+    path.write_text(json.dumps({
+        "kind": "demo-stage-recording", "status": "passed",
+        "checks": [{"id": "stage", "passed": True}],
+        "capture": {"headless": True, "window_visible": False}, "scene": {"id": "save-flow"},
+        "video": {"fps": 30, "frames": int(info["streams"][0]["nb_frames"]),
+                  "duration_s": float(info["format"]["duration"]),
+                  "sha256": sha256(take)},
+    }), encoding="utf-8")
+    return path
 
 
 def delivery_episode() -> dict:
@@ -489,5 +532,187 @@ class OfflineRenderTests(unittest.TestCase):
         self.assertIn("GATE=PASS", output)
 
 
+    def test_a_segment_named_like_its_take_leaves_the_take_untouched(self):
+        build = self.copy("screen_demo-samename")
+        episode = delivery_episode()
+        shutil.copy(build / "take.mp4", build / "01-open.mp4")
+        for segment in episode["segments"]:
+            segment["shot"] = "01-open.mp4"
+        write_episode(build, episode)
+        before = sha256(build / "01-open.mp4")
+
+        code, output = run(str(SCRIPTS / "render.py"), "render", str(build))
+
+        self.assertEqual(code, 0, output)
+        self.assertEqual(sha256(build / "01-open.mp4"), before)
+        self.assertEqual(self.timeline(build)[0]["source_sha256"], before)
+        self.assertTrue((build / "clips" / "01-open.mp4").is_file())
+
+    def test_assembly_files_cannot_collide_with_segment_ids(self):
+        build = self.copy("screen_demo-reserved-ids")
+        episode = delivery_episode()
+        for segment, new_id in zip(episode["segments"], ("picture", "voice")):
+            for stale in (build / "tts").glob(f"{segment['id']}.*"):
+                stale.unlink()
+            segment["id"] = new_id
+            seed_narration(build, segment)
+        write_episode(build, episode)
+
+        code, output = run(str(SCRIPTS / "render.py"), "render", str(build))
+
+        self.assertEqual(code, 0, output)
+        self.assertIn("gate=pass", output)
+        self.assertEqual([item["id"] for item in self.timeline(build)], ["picture", "voice"])
+
+    def test_a_truncated_take_fails_with_the_real_reason(self):
+        build = self.copy("screen_demo-truncated")
+        make_take(build / "take.mp4", faststart=True)
+        data = (build / "take.mp4").read_bytes()
+        (build / "take.mp4").write_bytes(data[:len(data) // 2])
+        episode = delivery_episode()
+        first = episode["segments"][0]
+        first["start"], first["end"] = 0.5, 7.5
+        for stale in (build / "tts").glob("01-open.*"):
+            stale.unlink()
+        seed_narration(build, first, seconds=6)
+        write_episode(build, episode)
+
+        code, output = run(str(SCRIPTS / "render.py"), "render", str(build))
+
+        self.assertEqual(code, 1, output)
+        self.assertNotIn("Traceback", output)
+        self.assertIn("FAIL:", output)
+        self.assertIn("01-open: recording ends after", output)
+        self.assertNotIn("gate=pass", output)
+
+    def test_no_temporary_or_per_segment_files_are_left_at_the_build_root(self):
+        root = sorted(path.name for path in self.build.iterdir() if path.is_file())
+        self.assertEqual(root, ["cover.png", "delivery.generated.md", "episode.json",
+                                "screen_demo.mp4", "take.mp4", "timeline.json"])
+        self.assertTrue((self.build / "clips" / "01-open.mp4").is_file())
+
+
+    def test_feedback_videos_disclose_retimed_segments_and_cards(self):
+        build = self.copy("screen_demo-feedback")
+        (build / "delivery.generated.md").unlink()
+        episode = feedback_episode()
+        for segment in episode["segments"]:
+            if segment.get("text"):
+                seed_narration(build, segment)
+        write_episode(build, episode)
+
+        code, output = run(str(SCRIPTS / "render.py"), "render", str(build))
+
+        self.assertEqual(code, 0, output)
+        self.assertIn("disclosed in feedback.generated.md", output)
+        self.assertNotIn("delivery.generated.md", output)
+        note = (build / "feedback.generated.md").read_text(encoding="utf-8")
+        speed = self.timeline(build)[0]["speed"]
+        self.assertIn(f"| REPRO | 00:00.000-00:02.", note)
+        self.assertIn(f"| {speed:.2f}x |", note)
+        self.assertIn("01-repro plays at", note)
+        self.assertIn("fast-forwarded", note)
+        self.assertIn("card: 对账金额与实际不一致", note)
+        self.assertNotIn("Every segment is a continuous take", note)
+        self.assertFalse((build / "delivery.generated.md").exists())
+        self.complete_review(build)
+        code, output = self.verify(build)
+        self.assertEqual(code, 0, output)
+
+    def test_every_speed_problem_is_listed_at_once(self):
+        build = self.copy("screen_demo-two-slow")
+        episode = delivery_episode()
+        episode["segments"][0]["start"], episode["segments"][0]["end"] = 0.5, 0.8
+        episode["segments"][1]["start"], episode["segments"][1]["end"] = 4.0, 4.3
+        write_episode(build, episode)
+        for stale in (build / "tts").glob("*"):
+            stale.unlink()
+        calls = fake_tts.fake_edge_tts(self)
+        out = io.StringIO()
+
+        with redirect_stdout(out):
+            with self.assertRaises(render.RenderError) as caught:
+                render.cmd_render(build)
+
+        self.assertIn("01-open", str(caught.exception))
+        self.assertIn("02-readback", str(caught.exception))
+        self.assertEqual(len(calls), 2)
+        self.assertNotIn("RENDERED", out.getvalue())
+
+    def test_a_clean_render_and_preflight_produce_no_warnings(self):
+        self.assertEqual(self.report(self.build)["warnings"], [])
+        code, output = run(str(SCRIPTS / "preflight.py"), str(self.build))
+        self.assertEqual(code, 0, output)
+        self.assertIn("PREFLIGHT=PASS warnings=0", output)
+
+    def test_verify_requires_the_delivery_note_binding(self):
+        build = self.copy("screen_demo-no-note-binding")
+        self.complete_review(build)
+        self.edit_json(build / "quality_gate" / "report.json",
+                       lambda report: report.pop("delivery"))
+        (build / "delivery.generated.md").unlink()
+
+        code, output = self.verify(build)
+
+        self.assertEqual(code, 1, output)
+        self.assertIn("no delivery note binding", output)
+
+    def test_verify_rechecks_take_evidence_with_the_render_rules(self):
+        build = self.copy("screen_demo-demo-stage")
+        make_take(build / "take.mp4", size="1280x720")
+        evidence = write_demo_stage_evidence(build, build / "take.mp4")
+        write_episode(build, demo_stage_episode())
+        code, output = run(str(SCRIPTS / "render.py"), "render", str(build))
+        self.assertEqual(code, 0, output)
+        self.complete_review(build)
+        code, output = self.verify(build)
+        self.assertEqual(code, 0, output)
+        self.assertEqual(self.timeline(build)[0]["source_evidence_sha256"], sha256(evidence))
+
+        def window_visible(data: dict) -> None:
+            data["capture"]["window_visible"] = True
+        self.edit_json(evidence, window_visible)
+        code, output = self.verify(build)
+        self.assertEqual(code, 1, output)
+        self.assertIn("window was visible", output)
+
+        self.edit_json(evidence, lambda data: data["capture"].__setitem__("window_visible", False))
+        self.edit_json(evidence, lambda data: data["video"].__setitem__("frames", "many"))
+        code, output = self.verify(build)
+        self.assertEqual(code, 1, output)
+        self.assertNotIn("Traceback", output)
+        self.assertIn("FAIL:", output)
+
+    def test_the_visual_review_needs_passing_scores_and_real_frames(self):
+        build = self.copy("screen_demo-zero-scores")
+        zeros = dict.fromkeys(dv_core.DIMENSIONS, 0.0)
+        self.complete_review(build, dimensions=zeros)
+        code, output = self.verify(build)
+        self.assertEqual(code, 1, output)
+        self.assertIn("below the 0.8 pass floor", output)
+
+        build = self.copy("screen_demo-phantom-frame")
+        draft = json.loads((build / "review" / "critic.draft.json").read_text(encoding="utf-8"))
+        frames = [dict(draft["reviewed_frames"][0], frame="review/frames/not-there.png")]
+        self.complete_review(build, reviewed_frames=frames + draft["reviewed_frames"][1:])
+        code, output = self.verify(build)
+        self.assertEqual(code, 1, output)
+        self.assertIn("not-there.png", output)
+
+    def test_a_narrated_card_checks_its_cached_narration_in_preflight(self):
+        build = self.copy("screen_demo-card-cache")
+        episode = card_episode()
+        for segment in episode["segments"]:
+            if segment.get("text"):
+                seed_narration(build, segment, seconds=6 if segment.get("shot") else 2)
+        write_episode(build, episode)
+        card = episode["segments"][0]
+        clock = dv_tts.cache_files(build, card["id"], card["text"], VOICE, "+5%")[1]
+        clock.write_text("{", encoding="utf-8")
+
+        code, output = run(str(SCRIPTS / "preflight.py"), str(build))
+
+        self.assertEqual(code, 1, output)
+        self.assertIn("corrupt TTS clock", output)
 if __name__ == "__main__":
     unittest.main()

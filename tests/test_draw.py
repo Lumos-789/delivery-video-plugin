@@ -78,5 +78,16 @@ class SubtitleHighlightTests(unittest.TestCase):
         self.assertEqual(self.column(self.render("打开页面", spoken=4), UNSAID), [])
 
 
+    def test_repro_steps_are_cut_to_the_panel_width(self):
+        from PIL import Image, ImageDraw
+        image = Image.new("RGB", (dv_draw.W, dv_draw.H), (0, 0, 0))
+        draw = ImageDraw.Draw(image)
+        panel_fill = (16, 26, 46)
+        dv_draw.repro_panel(draw, dv_draw.load_fonts(), ["这一步的说明特别长，需要被截断" * 4])
+        right = dv_draw.W - 56
+        outside = [image.getpixel((x, y)) for y in range(92, 330) for x in range(right + 1, dv_draw.W)]
+        self.assertEqual(set(outside), {(0, 0, 0)})
+        margin = [image.getpixel((x, y)) for y in range(144, 186) for x in range(right - 18, right)]
+        self.assertEqual(set(margin), {panel_fill})
 if __name__ == "__main__":
     unittest.main()

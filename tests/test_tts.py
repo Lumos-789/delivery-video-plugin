@@ -1,3 +1,4 @@
+import importlib.metadata
 import shutil
 import sys
 import unittest
@@ -86,6 +87,14 @@ class ClockTests(unittest.TestCase):
         self.assertEqual("".join(char["char"] for char in chars), text)
 
 
+def have_dist(name: str) -> bool:
+    try:
+        importlib.metadata.version(name)
+    except importlib.metadata.PackageNotFoundError:
+        return False
+    return True
+
+
 class CacheNamingTests(unittest.TestCase):
     BASE = [Path("build"), "s1", "打开页面", "zh-CN-YunxiNeural", "+5%"]
 
@@ -104,7 +113,8 @@ class CacheNamingTests(unittest.TestCase):
         self.assertTrue(clock.name.startswith("s1.") and clock.name.endswith(".json"), clock.name)
 
 
-@unittest.skipUnless(shutil.which("ffmpeg"), "ffmpeg is required")
+@unittest.skipUnless(shutil.which("ffmpeg") and have_dist("edge-tts"),
+                     "ffmpeg and edge-tts are required")
 class SynthTests(unittest.TestCase):
     SEGMENT = {"id": "s1", "text": "打开页面点击保存"}
     VOICE, RATE = "zh-CN-YunxiNeural", "+5%"
@@ -187,6 +197,39 @@ class SynthTests(unittest.TestCase):
 
         with self.assertRaisesRegex(dv_core.RenderError, "corrupt TTS clock.*delete"):
             self.synth(self.SEGMENT)
+
+
+    def test_a_long_latin_run_is_broken_to_fit_the_line(self):
+        chars = [{"char": char, "start_ms": index * 150, "end_ms": index * 150 + 140}
+                 for index, char in enumerate("标题未获取" + "a" * 48 + "，下一步")]
+
+        lines = dv_tts.group_lines(chars)
+
+        self.assertEqual("".join("".join(char["char"] for char in line) for line in lines),
+                         "标题未获取" + "a" * 48 + "，下一步")
+        for line in lines:
+            weighted = sum(0.55 if char["char"].isascii() else 1 for char in line)
+            self.assertLessEqual(weighted, 26.6, "".join(char["char"] for char in line))
+    def test_a_full_line_breaks_at_a_spoken_word_boundary(self):
+        text = "订单任务名单 2.0：打开页面点击保存，刷新后结果仍然生效。"
+        tokens = ["订单", "任务", "名单", "2.0", "打开", "页面", "点击", "保存", "刷新", "后",
+                  "结果", "仍然", "生效"]
+        words = [{"char": token, "start_ms": 250 + index * 400, "end_ms": 600 + index * 400}
+                 for index, token in enumerate(tokens)]
+
+        chars = dv_tts.align_clock(text, words)
+        lines = ["".join(char["char"] for char in line) for line in dv_tts.group_lines(chars)]
+
+        self.assertEqual(lines, ["订单任务名单 2.0：打开页面点击保存，刷新后结果", "仍然生效。"])
+
+    def test_a_single_word_wider_than_a_line_is_still_cut(self):
+        chars = [{"char": "标", "start_ms": 0, "end_ms": 100, "word": True}]
+        chars += [{"char": "题", "start_ms": 100 * index, "end_ms": 100 * index + 90}
+                  for index in range(1, 40)]
+
+        lines = dv_tts.group_lines(chars)
+
+        self.assertEqual([len(line) for line in lines], [26, 14])
 
 
 if __name__ == "__main__":

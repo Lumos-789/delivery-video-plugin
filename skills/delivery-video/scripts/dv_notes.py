@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Generated notes bound into the gate report: feedback.json and feedback.generated.md."""
+"""Generated notes bound into the gate report: the delivery and feedback files."""
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
 
-from dv_core import PHASE_LABELS, SEVERITIES, content_sha256, sha256
+from dv_core import PHASE_LABELS, SEVERITIES, content_sha256, sha256, write_text_atomic
 
 
 def format_clock(seconds: float) -> str:
@@ -18,6 +18,32 @@ def format_clock(seconds: float) -> str:
 
 def markdown_cell(value: object) -> str:
     return str(value).replace("|", "\\|").replace("\n", " ").strip()
+
+
+def is_card(item: dict) -> bool:
+    return item.get("kind", "shot") == "card"
+
+
+def retime_notes(retimed: list) -> list[str]:
+    """One line naming every segment played away from real time."""
+    if not retimed:
+        return []
+    notes = "; ".join(
+        "{} plays at {:.2f}x (footage {})".format(
+            item["id"], item["speed"],
+            "fast-forwarded" if item["speed"] > 1 else "slowed down")
+        for item in retimed
+    )
+    return [f"Retime notes: {notes}. Say so when presenting the video."]
+
+
+def take_bullets(timeline: list[dict], fingerprinted: bool) -> list[str]:
+    """What the segment table proves; a card never counts as footage."""
+    text = "- Every shot segment is one continuous range of the take listed above"
+    text += ("; each take's SHA256 is recorded in `timeline.json`." if fingerprinted else ".")
+    if any(is_card(item) for item in timeline):
+        text += " Cards are renderer-made titles with no footage."
+    return [text]
 
 
 def feedback_payload(issue: dict, segments: list[dict], report: dict) -> dict:
@@ -45,12 +71,8 @@ def feedback_payload(issue: dict, segments: list[dict], report: dict) -> dict:
     }
 
 
-def is_card(item: dict) -> bool:
-    return item.get("kind", "shot") == "card"
-
-
 def feedback_markdown(issue: dict, segments: list[dict], timeline: list[dict],
-                      report: dict) -> str:
+                      report: dict, retimed: list | None = None) -> str:
     issue_id = str(issue.get("id") or "").strip()
     heading = f"{issue_id} {issue['title']}".strip()
     severity = issue["severity"]
@@ -61,25 +83,14 @@ def feedback_markdown(issue: dict, segments: list[dict], timeline: list[dict],
     }
     rows = []
     for item in timeline:
+        phase, clock = phases.get(item["id"], "") or "-", in_video_clock(item)
         if is_card(item):
-            rows.append(
-                "| {phase} | {start}-{end} | card: {title} | - |".format(
-                    phase=phases.get(item["id"], "") or "-",
-                    start=format_clock(item["start"]),
-                    end=format_clock(item["end"]),
-                    title=markdown_cell(item["title"]),
-                )
-            )
+            rows.append(f"| {phase} | {clock} | card: {markdown_cell(item['title'])} | - | - |")
             continue
         rows.append(
-            "| {phase} | {start}-{end} | `{source}` | {src_start:.2f}-{src_end:.2f}s |".format(
-                phase=phases.get(item["id"], "") or "-",
-                start=format_clock(item["start"]),
-                end=format_clock(item["end"]),
-                source=markdown_cell(item["source"]),
-                src_start=float(item["source_start"]),
-                src_end=float(item["source_end"]),
-            )
+            f"| {phase} | {clock} | `{markdown_cell(item['source'])}` "
+            f"| {float(item['source_start']):.2f}-{float(item['source_end']):.2f}s "
+            f"| {float(item['speed']):.2f}x |"
         )
     repro = issue.get("repro") or []
     steps = "\n".join(f"{index + 1}. {step}" for index, step in enumerate(repro))
@@ -114,13 +125,17 @@ def feedback_markdown(issue: dict, segments: list[dict], timeline: list[dict],
         "",
         "## Segments",
         "",
-        "| Phase | In video | Source | Source range |",
-        "| --- | --- | --- | --- |",
+        "| Phase | In video | Source | Source range | Playback |",
+        "| --- | --- | --- | --- | --- |",
         *rows,
+    ])
+    if retimed:
+        lines.extend(["", *retime_notes(retimed)])
+    lines.extend([
         "",
         "## Proven by this artifact",
         "",
-        "- Every segment is a continuous take from the recording listed above.",
+        *take_bullets(timeline, fingerprinted=False),
         "- The quality gate is bound to the artifact SHA256; the posted file must match it.",
         "",
         "## Not verified",
@@ -132,33 +147,38 @@ def feedback_markdown(issue: dict, segments: list[dict], timeline: list[dict],
     return "\n".join(lines)
 
 
+def in_video_clock(item: dict) -> str:
+    return f"{format_clock(item['start'])}-{format_clock(item['end'])}"
+
+
 def write_feedback_report(build: Path, issue: dict, segments: list[dict], report: dict) -> Path:
     path = build / "feedback.json"
-    path.write_text(json.dumps(feedback_payload(issue, segments, report), ensure_ascii=False,
-                               indent=2), encoding="utf-8")
+    write_text_atomic(path, json.dumps(feedback_payload(issue, segments, report),
+                                       ensure_ascii=False, indent=2))
     return path
 
 
 def write_feedback_markdown(build: Path, issue: dict, segments: list[dict],
-                            timeline: list[dict], report: dict) -> Path:
+                            timeline: list[dict], report: dict,
+                            retimed: list | None = None) -> Path:
     path = build / "feedback.generated.md"
-    path.write_text(feedback_markdown(issue, segments, timeline, report), encoding="utf-8")
+    write_text_atomic(path, feedback_markdown(issue, segments, timeline, report, retimed))
     return path
 
 
 def write_delivery_note(build: Path, episode: dict, timeline: list[dict], report: dict,
-                        retimed: list[dict]) -> Path:
+                        retimed: list) -> Path:
     path = build / "delivery.generated.md"
-    path.write_text(delivery_markdown(episode, timeline, report, retimed), encoding="utf-8")
+    write_text_atomic(path, delivery_markdown(episode, timeline, report, retimed))
     return path
 
 
 def delivery_markdown(episode: dict, timeline: list[dict], report: dict,
-                      retimed: list[dict]) -> str:
+                      retimed: list) -> str:
     """The facts the renderer knows; commands run and unproven claims stay in delivery.md."""
     title = str(episode.get("title") or "").strip() or "Delivery demo"
     lines = [
-        f"# {title}",
+        f"# {markdown_cell(title)}",
         "",
         "> Draft generated by render.py from episode.json. The commands actually run and "
         "what the video does not prove belong in delivery.md.",
@@ -175,7 +195,7 @@ def delivery_markdown(episode: dict, timeline: list[dict], report: dict,
         lines.extend(["", "## Version evidence"])
         for key, value in evidence.items():
             shown = ", ".join(str(item) for item in value) if isinstance(value, list) else str(value)
-            lines.append(f"- {markdown_cell(key)}: {shown}")
+            lines.append(f"- {markdown_cell(key)}: {markdown_cell(shown)}")
     lines.extend([
         "",
         "## Segments",
@@ -184,12 +204,11 @@ def delivery_markdown(episode: dict, timeline: list[dict], report: dict,
         "| --- | --- | --- | --- | --- | --- | --- |",
     ])
     for number, item in enumerate(timeline, 1):
-        head = "{n} | {case} | {label} | {start}-{end}".format(
+        head = "{n} | {case} | {label} | {clock}".format(
             n=number,
             case=markdown_cell(item.get("case") or "-"),
             label=markdown_cell(item.get("label") or "-"),
-            start=format_clock(item["start"]),
-            end=format_clock(item["end"]),
+            clock=in_video_clock(item),
         )
         if is_card(item):
             lines.append(f"| {head} | card: {markdown_cell(item['title'])} | - | - |")
@@ -205,13 +224,7 @@ def delivery_markdown(episode: dict, timeline: list[dict], report: dict,
             )
         )
     if retimed:
-        notes = "; ".join(
-            "{} plays at {:.2f}x (footage {})".format(
-                item["id"], item["speed"],
-                "fast-forwarded" if item["speed"] > 1 else "slowed down")
-            for item in retimed
-        )
-        lines.extend(["", f"Retime notes: {notes}. Say so when presenting the video."])
+        lines.extend(["", *retime_notes(retimed)])
     warnings = report.get("warnings") or []
     if warnings:
         lines.extend(["", "## Gate warnings"])
@@ -220,8 +233,7 @@ def delivery_markdown(episode: dict, timeline: list[dict], report: dict,
         "",
         "## Proven by this artifact",
         "",
-        "- Every shot segment is one continuous range of the take listed above; "
-        "each take's SHA256 is recorded in `timeline.json`.",
+        *take_bullets(timeline, fingerprinted=True),
         "- `episode.json`, `timeline.json` and this note are bound into `quality_gate/report.json` "
         "together with the artifact SHA256; `verify_delivery.py` fails when any of them "
         "changes after rendering.",
@@ -231,7 +243,7 @@ def delivery_markdown(episode: dict, timeline: list[dict], report: dict,
 
 
 def write_report(report_path: Path, report: dict) -> None:
-    report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    write_text_atomic(report_path, json.dumps(report, ensure_ascii=False, indent=2))
 
 
 def feedback_binding(feedback: dict, markdown_path: Path) -> dict:

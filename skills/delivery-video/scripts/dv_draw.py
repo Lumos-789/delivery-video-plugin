@@ -44,6 +44,15 @@ def header(draw, fonts: Fonts, severity: tuple, case: str, label: str) -> None:
     draw.text((x, 34), label, font=fonts.label, fill=(190, 206, 230), anchor="lm")
 
 
+def fit_text(draw, text: str, font, max_width: int) -> str:
+    """Cut a line to a pixel width; a cut line ends with an ellipsis."""
+    if draw.textlength(text, font=font) <= max_width:
+        return text
+    while text and draw.textlength(text + "…", font=font) > max_width:
+        text = text[:-1]
+    return text + "…"
+
+
 def repro_panel(draw, fonts: Fonts, steps: list) -> None:
     visible = steps[:REPRO_PANEL_LIMIT]
     omitted = len(steps) - len(visible)
@@ -56,9 +65,7 @@ def repro_panel(draw, fonts: Fonts, steps: list) -> None:
               fill=(150, 176, 214), anchor="lm")
     y = top + 52
     for index, step in enumerate(visible):
-        text = f"{index + 1}. {step}"
-        if len(text) > 34:
-            text = text[:33] + "..."
+        text = fit_text(draw, f"{index + 1}. {step}", fonts.panel, width - 36)
         draw.text((left + 18, y), text, font=fonts.panel, fill=(236, 242, 250), anchor="lm")
         y += line_h
     if omitted:

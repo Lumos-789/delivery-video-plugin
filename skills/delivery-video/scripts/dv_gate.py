@@ -8,7 +8,7 @@ import re
 import subprocess
 from pathlib import Path
 
-from dv_core import CARD_SHARE_MAX, FPS, H, PROFILE, W, probe_json, sha256
+from dv_core import CARD_SHARE_MAX, FPS, H, PROFILE, W, probe_json, sha256, write_text_atomic
 
 
 def parse_detects(log: str, key: str) -> list[dict]:
@@ -117,7 +117,7 @@ def quality_gate(video: Path, work: Path, exempt: list[dict] | None = None) -> d
         ebur = subprocess.run(
             ["ffmpeg", "-nostdin", "-i", str(video), "-filter_complex",
              "loudnorm=I=-14:TP=-1.5:LRA=11:print_format=json", "-f", "null", "-"],
-            capture_output=True, text=True)
+            capture_output=True, text=True, encoding="utf-8", errors="replace")
         if ebur.returncode == 0 and "{" in ebur.stderr:
             meas = json.loads(ebur.stderr[ebur.stderr.rindex("{"):ebur.stderr.rindex("}") + 1])
             integrated = float(meas.get("input_i", "0") or 0)
@@ -127,11 +127,10 @@ def quality_gate(video: Path, work: Path, exempt: list[dict] | None = None) -> d
                              "message": f"integrated loudness {integrated:.1f} LUFS outside [-30,-5]"})
         else:
             checks["loudness_lufs"] = None
-            print(
-                f"WARN: loudness measurement failed (exit {ebur.returncode}), "
-                f"L101 not evaluated: {ebur.stderr.strip()[-300:]}",
-                flush=True,
-            )
+            hard.append({"code": "L102",
+                         "message": f"loudness could not be measured (ffmpeg exit "
+                                    f"{ebur.returncode}), so L101 was not evaluated: "
+                                    f"{ebur.stderr.strip()[-300:]}"})
         filters = {
             "black": (["-vf", "blackdetect=d=0.5:pix_th=0.05", "-an"], 1.0, 0.3, "B101"),
             "freeze": (["-vf", "freezedetect=n=-60dB:d=0.5", "-an"], 2.0, 0.8, "T301"),
@@ -140,7 +139,7 @@ def quality_gate(video: Path, work: Path, exempt: list[dict] | None = None) -> d
         for name, (args, hard_s, warn_s, code) in filters.items():
             scan = subprocess.run(
                 ["ffmpeg", "-nostdin", "-v", "info", "-i", str(video), *args, "-f", "null", "-"],
-                capture_output=True, text=True)
+                capture_output=True, text=True, encoding="utf-8", errors="replace")
             spans = parse_detects(scan.stderr, "start")
             # freezedetect/blackdetect emit only *_start when the span runs to EOF
             if total > 0:
@@ -177,8 +176,5 @@ def quality_gate(video: Path, work: Path, exempt: list[dict] | None = None) -> d
                           for item in cards],
             "seconds": round(card_s, 3),
         }
-    (work / "report.json").write_text(
-        json.dumps(report, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+    write_text_atomic(work / "report.json", json.dumps(report, ensure_ascii=False, indent=2))
     return report

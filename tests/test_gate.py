@@ -54,7 +54,7 @@ class QualityGateDetectTests(unittest.TestCase):
         self._tmp.cleanup()
 
     def run_gate(self, detect_logs: dict[str, str], frame_rate: str = "30/1",
-                exempt=None) -> dict:
+                exempt=None, loudnorm_ok: bool = True) -> dict:
         probe = {
             "streams": [
                 {"codec_type": "video", "codec_name": "h264",
@@ -74,7 +74,8 @@ class QualityGateDetectTests(unittest.TestCase):
                 if token in joined:
                     return types.SimpleNamespace(returncode=0, stdout="", stderr=log)
             if "loudnorm" in joined:
-                return types.SimpleNamespace(returncode=0, stdout="", stderr=loudnorm)
+                return types.SimpleNamespace(returncode=0 if loudnorm_ok else 1, stdout="",
+                                             stderr=loudnorm if loudnorm_ok else "boom")
             raise AssertionError(f"unexpected command: {args}")
 
         with mock.patch.object(dv_gate.subprocess, "run", side_effect=fake_run):
@@ -155,5 +156,24 @@ class QualityGateDetectTests(unittest.TestCase):
         self.assertEqual(report["status"], "fail")
 
 
+    def test_frozen_share_is_measured_against_footage_not_the_whole_video(self):
+        logs = {
+            "blackdetect": "",
+            "freezedetect": "[Parsed_freezedetect_0 @ 0x7cc7018c00] "
+                            "lavfi.freezedetect.freeze_start: 4\n"
+                            "lavfi.freezedetect.freeze_end: 4.9\n"
+                            "lavfi.freezedetect.freeze_start: 6\n"
+                            "lavfi.freezedetect.freeze_end: 6.9\n",
+            "silencedetect": "",
+        }
+        report = self.run_gate(logs, exempt=[{"start": 0.0, "end": 3.0}])
+        self.assertEqual([item["code"] for item in report["hard_failures"]], ["T304"])
+        self.assertIn("20% of the footage", report["hard_failures"][0]["message"])
+
+    def test_a_failed_loudness_measurement_is_a_hard_failure(self):
+        report = self.run_gate({"blackdetect": "", "freezedetect": "", "silencedetect": ""},
+                               loudnorm_ok=False)
+        self.assertIn("L102", [item["code"] for item in report["hard_failures"]])
+        self.assertEqual(report["status"], "fail")
 if __name__ == "__main__":
     unittest.main()

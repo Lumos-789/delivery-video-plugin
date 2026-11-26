@@ -1,4 +1,5 @@
 import hashlib
+import importlib.metadata
 import json
 import shutil
 import subprocess
@@ -22,7 +23,16 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-@unittest.skipUnless(FFMPEG and FFPROBE, "ffmpeg and ffprobe are required")
+def have_dist(name: str) -> bool:
+    try:
+        importlib.metadata.version(name)
+    except importlib.metadata.PackageNotFoundError:
+        return False
+    return True
+
+
+@unittest.skipUnless(FFMPEG and FFPROBE and have_dist("edge-tts") and have_dist("Pillow"),
+                     "ffmpeg, ffprobe, edge-tts and Pillow are required")
 class PreflightBuildTests(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory(prefix="dv-preflight-")
