@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import dataclasses
 import json
-import math
 import re
 import shutil
 from pathlib import Path
@@ -16,12 +15,10 @@ from dv_core import (
     EVIDENCE_KINDS,
     FPS,
     LAYOUTS,
-    LEAD,
     RATE,
     SEGMENT_ID,
     SPEED_MAX,
     SPEED_MIN,
-    TAIL,
     RenderError,
     check_edge_tts_version,
     check_pillow,
@@ -32,7 +29,7 @@ from dv_core import (
     probe_video,
     sha256,
 )
-from dv_tts import cache_files
+from dv_tts import cache_files, read_clock, segment_seconds
 
 # TTS reading of these chars depends on context (e.g. 行 háng/xíng): confirm each hit or rewrite
 POLYPHONES = {
@@ -239,44 +236,45 @@ def check_evidence_size(prefix: str, evidence: dict | None, width: int, height: 
         )
 
 
-def check_tts(build: Path, segment: dict, start: float, end: float,
-              voice: str, rate: str, report: Validation) -> bool:
-    """Return True when nothing is cached, so the speed is still unknown."""
-    segment_id = segment["id"]
-    mp3, clock = cache_files(build, segment_id)
+def speed_error(segment: dict, seconds: float) -> str | None:
+    """Playback rate implied by a narration length and a footage range."""
+    start, end = float(segment["start"]), float(segment["end"])
+    speed = (end - start) / seconds
+    if SPEED_MIN <= speed <= SPEED_MAX:
+        return None
+    return (f"{segment['id']}: recording speed {speed:.2f}x outside "
+            f"{SPEED_MIN:g}x..{SPEED_MAX:g}x "
+            f"(interval {end - start:.2f}s, narration {seconds:.2f}s)")
+
+
+def check_tts(build: Path, segment: dict, voice: str, rate: str,
+              report: Validation) -> bool:
+    """Return True when nothing usable is cached, so the speed is still unknown."""
+    mp3, clock = cache_files(build, segment["id"], segment["text"], voice, rate)
     if not mp3.exists() and not clock.exists():
         return True
-    if not mp3.is_file() or not clock.is_file():
-        report.errors.append(f"{segment_id}: incomplete TTS cache, need both .mp3 and .json")
-        return False
+    if not (mp3.is_file() and clock.is_file()):
+        report.notes.append(
+            f"{segment['id']}: incomplete narration cache; it is re-synthesized at render"
+        )
+        return True
     try:
-        cached = json.loads(clock.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        report.errors.append(f"{segment_id}: invalid TTS clock JSON: {exc}")
-        return False
-    if not isinstance(cached, dict):
-        report.errors.append(f"{segment_id}: TTS clock must be a JSON object")
-        return False
-    for key, value in {"text": segment["text"], "voice": voice, "rate": rate}.items():
-        if cached.get(key) != value:
-            report.errors.append(
-                f"{segment_id}: TTS cache mismatch for {key}; "
-                "delete the stale tts/<id>.mp3 and .json, then rerender"
-            )
-    try:
-        audio_duration = duration(mp3)
+        read_clock(clock, segment["text"])
+        seconds = segment_seconds(duration(mp3))
     except RenderError as exc:
         report.errors.append(str(exc))
         return False
-    seconds = math.ceil((audio_duration + LEAD + TAIL) * FPS) / FPS
-    speed = (end - start) / seconds if seconds else 0.0
-    if not SPEED_MIN <= speed <= SPEED_MAX:
-        report.errors.append(
-            f"{segment_id}: recording speed {speed:.2f}x outside "
-            f"{SPEED_MIN:g}x..{SPEED_MAX:g}x "
-            f"(interval {end - start:.2f}s, narration {seconds:.2f}s)"
-        )
+    error = speed_error(segment, seconds)
+    if error:
+        report.errors.append(error)
     return False
+
+
+def legacy_cache_names(build: Path) -> list[str]:
+    """Files from the pre-content-addressed cache (tts/<id>.mp3|.json); ignored."""
+    names = [path.name for path in (build / "tts").glob("*")
+             if path.is_file() and path.suffix in (".mp3", ".json") and "." not in path.stem]
+    return sorted(names)
 
 
 def check_redline(texts: list[str], report: Validation) -> None:
@@ -443,8 +441,7 @@ def validate_episode(build: Path, episode: dict, report: Validation) -> Validati
             f"source={width}x{height} duration={source_duration:.2f}s"
         )
         if voice_ok and rate_ok and text_ok:
-            if check_tts(build, segment, float(start), float(end),
-                         voice_value, rate_value, report):
+            if check_tts(build, segment, voice_value, rate_value, report):
                 uncached.append(segment_id)
 
     report.errors.extend(feedback_errors(episode, segments))
@@ -456,11 +453,17 @@ def validate_episode(build: Path, episode: dict, report: Validation) -> Validati
             f"{len(uncached)} segment(s) have no cached TTS; speed range not checked: "
             + ", ".join(uncached)
         )
+    legacy = legacy_cache_names(build)
+    if legacy:
+        report.warnings.append(
+            "legacy TTS cache files are ignored and can be deleted: " + ", ".join(legacy)
+        )
     return report
 
 
 def validate(build: Path) -> Validation:
     """Every material rule for a build directory, collected instead of raised."""
+    build = build.expanduser().resolve()
     report = Validation()
     for executable in ("ffmpeg", "ffprobe"):
         if shutil.which(executable) is None:

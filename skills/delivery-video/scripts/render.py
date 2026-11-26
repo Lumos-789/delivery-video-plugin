@@ -23,22 +23,18 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import argparse
 import asyncio
 import bisect
+import dataclasses
 import json
-import math
 import subprocess
 import tempfile
 
 from dv_core import (
     FPS,
     H,
-    LAYOUTS,
     LEAD,
     PHASE_LABELS,
     SEVERITIES,
-    SPEED_MAX,
-    SPEED_MIN,
     SPEED_NOTICE,
-    TAIL,
     W,
     RenderError,
     check_tools,
@@ -49,7 +45,7 @@ from dv_core import (
     sha256,
 )
 from dv_draw import header, load_fonts, repro_panel, subtitle
-from dv_episode import Source, validate
+from dv_episode import Source, speed_error, validate
 from dv_gate import quality_gate
 from dv_notes import (
     bind_feedback_evidence,
@@ -58,7 +54,7 @@ from dv_notes import (
     write_feedback_report,
     write_report,
 )
-from dv_tts import group_lines, synth
+from dv_tts import Narration, group_lines, synth
 
 
 def segment_filter(crop: list[int] | None, layout: str, speed: float,
@@ -89,32 +85,58 @@ def narration_filter() -> str:
     return f"adelay={round(LEAD * 1000)}:all=1,apad"
 
 
-def render_segment(segment: dict, source: Source, mp3: Path, chars: list[dict],
-                   build: Path, feedback: dict | None = None, layout: str = "banded"):
+@dataclasses.dataclass
+class Planned:
+    """One segment with its narration synthesized and its timing already legal."""
+    segment: dict
+    source: Source
+    narration: Narration
+    seconds: float
+    speed: float
+
+
+def plan_segments(build: Path, segments: list, sources: dict, voice: str,
+                  rate: str) -> list:
+    """Phase 1: every narration is synthesized and every duration rule checked
+    before a single frame is rendered, so a bad segment costs no render time."""
+    planned, problems = [], []
+    for segment in segments:
+        narration = asyncio.run(synth(segment, voice, rate, build))
+        error = speed_error(segment, narration.seconds)
+        if error:
+            problems.append(error)
+            continue
+        span = float(segment["end"]) - float(segment["start"])
+        planned.append(Planned(segment, sources[segment["id"]], narration,
+                               narration.seconds, span / narration.seconds))
+    if problems:
+        raise RenderError(
+            "nothing rendered yet; fix these segments first:\n"
+            + "\n".join(f"  - {problem}" for problem in problems)
+        )
+    return planned
+
+
+def render_segment(item: Planned, build: Path, feedback: dict | None = None,
+                   layout: str = "banded"):
     from PIL import Image, ImageDraw
-    src = source.path
+    segment, source, seconds, speed = item.segment, item.source, item.seconds, item.speed
     start, end = float(segment["start"]), float(segment["end"])
     if not 0 <= start < end <= source.duration + 0.1:
         raise RenderError(f"invalid recording interval: {segment['id']}")
-    seconds = math.ceil((duration(mp3) + LEAD + TAIL) * FPS) / FPS
     frames = round(seconds * FPS)
-    speed = (end - start) / seconds
-    if not SPEED_MIN <= speed <= SPEED_MAX:
-        raise RenderError(
-            f"recording speed {speed:.2f}x outside {SPEED_MIN}x..{SPEED_MAX}x for "
-            f"{segment['id']}: shorten the narration or widen the interval")
     crop = segment.get("crop")
     if crop is not None:
         error = crop_error(segment["id"], crop, source.width, source.height)
         if error:
             raise RenderError(error)
-    vf = segment_filter(crop, layout, seconds / (end - start), seconds)
+    vf = segment_filter(crop, layout, speed, seconds)
     # stderr to temp files: an unread stderr PIPE deadlocks both ffmpegs once a log passes 64KB.
     decode_log = tempfile.TemporaryFile()
     encode_log = tempfile.TemporaryFile()
     decode = subprocess.Popen(
         ["ffmpeg", "-nostdin", "-v", "error", "-ss", str(start), "-t", str(end - start),
-         "-i", str(src), "-vf", vf, "-frames:v", str(frames),
+         "-i", str(source.path), "-vf", vf, "-frames:v", str(frames),
          "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1"],
         stdout=subprocess.PIPE, stderr=decode_log)
     output = build / f"{segment['id']}.mp4"
@@ -124,7 +146,7 @@ def render_segment(segment: dict, source: Source, mp3: Path, chars: list[dict],
          "-c:v", "libx264", "-preset", "fast", "-crf", "19", "-pix_fmt", "yuv420p",
          str(output)],
         stdin=subprocess.PIPE, stderr=encode_log)
-    lines = group_lines(chars)
+    lines = group_lines(item.narration.chars)
     starts = [line[0]["start_ms"] for line in lines]
     fonts = load_fonts()
     repro_steps = list((feedback or {}).get("repro") or [])
@@ -160,7 +182,7 @@ def render_segment(segment: dict, source: Source, mp3: Path, chars: list[dict],
         encode_log.close()
     if failed:
         raise RenderError(f"video encoding failed:\n{decode_error}\n{encode_error}")
-    run(["ffmpeg", "-nostdin", "-y", "-v", "error", "-i", str(mp3),
+    run(["ffmpeg", "-nostdin", "-y", "-v", "error", "-i", str(item.narration.mp3),
          "-af", narration_filter(), "-t", str(seconds),
          "-ar", "44100", "-ac", "2", "-c:a", "pcm_s16le",
          str(output.with_suffix(".wav"))])
@@ -200,12 +222,12 @@ def cmd_render(build: Path) -> int:
     layout = episode.get("layout", "banded")
     voice, rate = episode["voice"], episode.get("rate", "+5%")
 
+    planned = plan_segments(build, segments, validation.sources, voice, rate)
     tracks, timeline, retimed, offset = [], [], [], 0.0
     take_digests: dict = {}
-    for segment in segments:
-        mp3, chars = asyncio.run(synth(segment, voice, rate, build))
-        source = validation.sources[segment["id"]]
-        clip, seconds, speed = render_segment(segment, source, mp3, chars, build, feedback, layout)
+    for item in planned:
+        segment, source, seconds, speed = item.segment, item.source, item.seconds, item.speed
+        clip = render_segment(item, build, feedback, layout)[0]
         tracks.append(clip)
         if source.path not in take_digests:
             take_digests[source.path] = sha256(source.path)
@@ -236,11 +258,11 @@ def cmd_render(build: Path) -> int:
         "".join(f"file '{p.with_suffix('.wav').name}'\n" for p in tracks),
         encoding="utf-8",
     )
-    voice = build / "voice.wav"
+    narration_wav = build / "voice.wav"
     run(["ffmpeg", "-nostdin", "-y", "-v", "error", "-f", "concat", "-safe", "0",
-         "-i", str(voice_list), "-c:a", "pcm_s16le", str(voice)])
+         "-i", str(voice_list), "-c:a", "pcm_s16le", str(narration_wav)])
     assembled = build / "assembled.mp4"
-    run(["ffmpeg", "-nostdin", "-y", "-v", "error", "-i", str(picture), "-i", str(voice),
+    run(["ffmpeg", "-nostdin", "-y", "-v", "error", "-i", str(picture), "-i", str(narration_wav),
          "-map", "0:v", "-map", "1:a", "-c:v", "copy", "-c:a", "aac",
          "-ar", "44100", "-ac", "2", "-t", str(offset), str(assembled)])
     final = build / "screen_demo.mp4"

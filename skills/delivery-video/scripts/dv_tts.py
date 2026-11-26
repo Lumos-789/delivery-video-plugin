@@ -1,56 +1,125 @@
 #!/usr/bin/env python3
-"""Narration synthesis, the TTS cache and the subtitle clock."""
+"""Narration synthesis, the TTS cache and the subtitle clock.
+
+The cache is content-addressed (tts/<id>.<key>.mp3/.json, key = text + voice +
+rate), so an edited narration can never reuse stale audio and nothing has to be
+deleted by hand.
+"""
 
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
+import math
+import os
 from pathlib import Path
 
-from dv_core import MAX_LINE, RenderError, check_edge_tts_version
+from dv_core import (
+    FPS,
+    LEAD,
+    MAX_LINE,
+    TAIL,
+    RenderError,
+    check_edge_tts_version,
+    content_sha256,
+    duration,
+)
 
 BREAK_AFTER = set("。！？；!?;")
 SOFT_BREAK = set("，、,")
+CACHE_KEY_LENGTH = 16
 
 
-def cache_files(build: Path, segment_id: str) -> tuple[Path, Path]:
+@dataclasses.dataclass
+class Narration:
+    mp3: Path
+    seconds: float
+    chars: list
+
+
+def segment_seconds(audio_duration: float) -> float:
+    """Frame-aligned segment length: narration plus lead-in and tail."""
+    return math.ceil((audio_duration + LEAD + TAIL) * FPS) / FPS
+
+
+def cache_files(build: Path, segment_id: str, text: str, voice: str,
+                rate: str) -> tuple[Path, Path]:
+    key = content_sha256([text, voice, rate])[:CACHE_KEY_LENGTH]
     root = build / "tts"
-    return root / f"{segment_id}.mp3", root / f"{segment_id}.json"
+    return root / f"{segment_id}.{key}.mp3", root / f"{segment_id}.{key}.json"
 
 
-async def synth(segment: dict, voice: str, rate: str, build: Path):
+def read_clock(clock: Path, text: str) -> list:
+    """Thread a cached word clock through the text; unusable caches fail loud."""
+    try:
+        cached = json.loads(clock.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RenderError(
+            f"corrupt TTS clock cache {clock.name}: {exc}; delete it to re-synthesize"
+        ) from exc
+    if not isinstance(cached, dict) or not isinstance(cached.get("words"), list):
+        raise RenderError(
+            f"corrupt TTS clock cache {clock.name}: no word boundaries; "
+            "delete it to re-synthesize"
+        )
+    return align_clock(text, cached["words"])
+
+
+async def synthesize(segment_id: str, text: str, voice: str,
+                     rate: str) -> tuple[bytes, list]:
+    """Call edge-tts; service and network failures become a clean RenderError."""
     check_edge_tts_version()
     import edge_tts
-    mp3, clock = cache_files(build, segment["id"])
-    root = mp3.parent
-    root.mkdir(exist_ok=True)
-    contract = {"text": segment["text"], "voice": voice, "rate": rate}
-    if mp3.exists() or clock.exists():
-        if not (mp3.exists() and clock.exists()):
-            raise RenderError(f"incomplete narration cache: {segment['id']}")
-        cached = json.loads(clock.read_text(encoding="utf-8"))
-        if any(cached.get(k) != v for k, v in contract.items()):
-            raise RenderError(
-                f"narration cache mismatch for {segment['id']}: edit episode.json "
-                "and delete tts/<id>.mp3/.json to re-synthesize")
-        return mp3, align_clock(segment["text"], cached["words"])
     words, content = [], bytearray()
-    stream = edge_tts.Communicate(segment["text"], voice, rate=rate, boundary="WordBoundary")
-    async for chunk in stream.stream():
-        if chunk["type"] == "audio":
-            content.extend(chunk["data"])
-        elif chunk["type"] == "WordBoundary":
-            words.append({"char": chunk["text"],
-                          "start_ms": chunk["offset"] // 10000,
-                          "end_ms": (chunk["offset"] + chunk["duration"]) // 10000})
+    try:
+        stream = edge_tts.Communicate(text, voice, rate=rate, boundary="WordBoundary")
+        async for chunk in stream.stream():
+            if chunk["type"] == "audio":
+                content.extend(chunk["data"])
+            elif chunk["type"] == "WordBoundary":
+                words.append({"char": chunk["text"],
+                              "start_ms": chunk["offset"] // 10000,
+                              "end_ms": (chunk["offset"] + chunk["duration"]) // 10000})
+    except Exception as exc:
+        raise RenderError(
+            f"narration synthesis failed for {segment_id}: {type(exc).__name__}: {exc} "
+            "-- check the network and the voice, then rerun; "
+            "finished segments stay cached"
+        ) from exc
     if not words or not content:
-        raise RenderError(f"no audio or word boundaries from TTS: {segment['id']}")
-    mp3.write_bytes(content)
-    clock.write_text(
-        json.dumps({**contract, "words": words}, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
-    return mp3, align_clock(segment["text"], words)
+        raise RenderError(
+            f"narration synthesis failed for {segment_id}: "
+            "no audio or word boundaries came back"
+        )
+    return bytes(content), words
+
+
+def write_cache(mp3: Path, clock: Path, audio: bytes, record: dict) -> None:
+    """Both halves are replaced atomically; a crash between them leaves a plain cache miss."""
+    mp3.parent.mkdir(parents=True, exist_ok=True)
+    audio_part = mp3.with_name(mp3.name + ".part")
+    clock_part = clock.with_name(clock.name + ".part")
+    audio_part.write_bytes(audio)
+    clock_part.write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8")
+    os.replace(audio_part, mp3)
+    os.replace(clock_part, clock)
+
+
+async def synth(segment: dict, voice: str, rate: str, build: Path) -> Narration:
+    text = segment["text"]
+    mp3, clock = cache_files(build, segment["id"], text, voice, rate)
+    if mp3.is_file() and clock.is_file():
+        chars = read_clock(clock, text)
+    else:
+        if mp3.exists() or clock.exists():
+            print(f"NOTE {segment['id']}: incomplete narration cache, re-synthesizing",
+                  flush=True)
+        audio, words = await synthesize(segment["id"], text, voice, rate)
+        chars = align_clock(text, words)
+        write_cache(mp3, clock, audio,
+                    {"text": text, "voice": voice, "rate": rate, "words": words})
+    return Narration(mp3, segment_seconds(duration(mp3)), chars)
 
 
 def align_clock(text: str, words: list[dict]) -> list[dict]:
@@ -72,7 +141,8 @@ def align_clock(text: str, words: list[dict]) -> list[dict]:
         index = text.find(token, cursor)
         if index < 0:
             raise RenderError(
-                f"TTS word boundary {token!r} is not present in narration {text!r}"
+                f"TTS word boundary {token!r} is not present in narration {text!r}; "
+                "rewrite the segment without symbols, emoji or mixed scripts"
             )
         gap = text[cursor:index]
         for char in gap:

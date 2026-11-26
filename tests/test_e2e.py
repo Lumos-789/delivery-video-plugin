@@ -1,11 +1,13 @@
 import hashlib
 import importlib.metadata
+import io
 import json
 import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 
 sys.dont_write_bytecode = True
@@ -13,7 +15,11 @@ sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / "skills" / "delivery-video" / "scripts"
 sys.path.insert(0, str(SCRIPTS))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 import dv_core  # noqa: E402
+import dv_tts  # noqa: E402
+import fake_tts  # noqa: E402
+import render  # noqa: E402
 
 FFMPEG = shutil.which("ffmpeg")
 FFPROBE = shutil.which("ffprobe")
@@ -55,8 +61,8 @@ def make_take(path: Path, seconds: int = 12, pattern: str = "testsrc2") -> None:
 
 def seed_narration(build: Path, segment: dict) -> None:
     """Pre-populate the narration cache so rendering needs no network."""
-    mp3 = build / "tts" / f"{segment['id']}.mp3"
-    clock = build / "tts" / f"{segment['id']}.json"
+    mp3, clock = dv_tts.cache_files(build, segment["id"], segment["text"],
+                                    segment.get("_voice", VOICE), segment.get("_rate", "+5%"))
     mp3.parent.mkdir(exist_ok=True)
     ffmpeg("-f", "lavfi", "-i", "sine=frequency=440:duration=2", "-c:a", "libmp3lame",
            "-b:a", "64k", str(mp3))
@@ -275,6 +281,56 @@ class OfflineRenderTests(unittest.TestCase):
         speed = self.timeline(build)[0]["speed"]
         self.assertTrue(2.0 < speed < 2.6, speed)
         self.assertIn(f"{speed:.2f}x", (build / "delivery.generated.md").read_text(encoding="utf-8"))
+
+
+    def test_every_speed_problem_is_reported_before_any_segment_renders(self):
+        build = self.copy("screen_demo-late-slow")
+        episode = delivery_episode()
+        episode["segments"][1]["start"], episode["segments"][1]["end"] = 4.0, 4.3
+        write_episode(build, episode)
+        for stale in (build / "tts").glob("02-readback.*"):
+            stale.unlink()
+        for rendered in build.glob("01-open.*"):
+            rendered.unlink()
+        calls = fake_tts.fake_edge_tts(self)
+        out = io.StringIO()
+
+        with redirect_stdout(out):
+            with self.assertRaises(render.RenderError) as caught:
+                render.cmd_render(build)
+
+        message = str(caught.exception)
+        self.assertIn("02-readback", message)
+        self.assertIn("speed", message)
+        self.assertEqual(len(calls), 1)
+        self.assertNotIn("RENDERED", out.getvalue())
+        self.assertFalse((build / "01-open.mp4").exists())
+
+    def test_preflight_reports_legacy_cache_files_once(self):
+        build = self.copy("screen_demo-legacy")
+        mp3 = next((build / "tts").glob("01-open.*.mp3"))
+        clock = mp3.with_suffix(".json")
+        (build / "tts" / "legacy-01-open.mp3").write_bytes(b"x")
+        (build / "tts" / "legacy-01-open.json").write_text("{}", encoding="utf-8")
+
+        code, output = run(str(SCRIPTS / "preflight.py"), str(build))
+
+        self.assertEqual(code, 0, output)
+        self.assertEqual(output.count("legacy TTS cache"), 1, output)
+        self.assertIn("legacy-01-open.mp3", output)
+        self.assertNotIn(mp3.name, output.split("legacy TTS cache")[1])
+
+    def test_a_corrupt_narration_cache_is_a_clean_fail(self):
+        build = self.copy("screen_demo-corrupt-cache")
+        mp3 = next((build / "tts").glob("01-open.*.mp3"))
+        mp3.with_suffix(".json").write_text("{", encoding="utf-8")
+
+        code, output = run(str(SCRIPTS / "render.py"), "render", str(build))
+
+        self.assertEqual(code, 1, output)
+        self.assertIn("FAIL:", output)
+        self.assertIn("corrupt TTS clock", output)
+        self.assertNotIn("Traceback", output)
 
 
 if __name__ == "__main__":
