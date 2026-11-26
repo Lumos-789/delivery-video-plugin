@@ -1,0 +1,143 @@
+#!/usr/bin/env python3
+"""The deterministic delivery gate; hard failures make status=fail."""
+
+from __future__ import annotations
+
+import json
+import re
+import subprocess
+from pathlib import Path
+
+from dv_core import FPS, H, PROFILE, W, probe_json, sha256
+
+
+def parse_detects(log: str, key: str) -> list[dict]:
+    """Parse ffmpeg silencedetect/blackdetect/freezedetect key=value lines.
+
+    blackdetect prints no space after the colon; silencedetect/freezedetect do.
+    A span still open at EOF has *_start with no *_end (kept, closed by caller).
+    """
+    events, current = [], {}
+    for line in log.splitlines():
+        for match in re.finditer(r"(\w+)_start: ?([\d.]+)", line):
+            current = {key: float(match.group(2))}
+        for match in re.finditer(r"(\w+)_end: ?([\d.]+)", line):
+            current["end"] = float(match.group(2))
+            if "start" in current:
+                events.append(current)
+                current = {}
+    if "start" in current:
+        events.append(current)
+    return events
+
+
+def quality_gate(video: Path, work: Path) -> dict:
+    """Deterministic delivery gate; hard failures make status=fail."""
+    work.mkdir(parents=True, exist_ok=True)
+    hard, warnings, notices, checks = [], [], [], {}
+    info = probe_json(video)
+    streams = info.get("streams") or []
+    fmt = info.get("format") or {}
+    total = float(fmt.get("duration") or 0)
+
+    video_stream = next((s for s in streams if s.get("codec_type") == "video"), None)
+    audio_stream = next((s for s in streams if s.get("codec_type") == "audio"), None)
+    if video_stream is None:
+        hard.append({"code": "M100", "message": "no video stream"})
+    else:
+        wh = (video_stream.get("width"), video_stream.get("height"))
+        if wh != (W, H):
+            hard.append({"code": "M101", "message": f"resolution {wh}, expected {(W, H)}"})
+        rate = video_stream.get("avg_frame_rate") or "0/1"
+        num, _, den = rate.partition("/")
+        try:
+            fps = float(num) / float(den or 1)
+        except (ValueError, ZeroDivisionError):
+            fps = 0.0
+        if abs(fps - FPS) > 0.01:
+            hard.append({"code": "M102", "message": f"frame rate {fps:.3f}, expected {FPS}"})
+        if video_stream.get("codec_name") != "h264":
+            hard.append({"code": "M103", "message": f"codec {video_stream.get('codec_name')}, expected h264"})
+        checks["spec"] = {"wh": list(wh), "fps": round(fps, 3),
+                          "codec": video_stream.get("codec_name")}
+    if audio_stream is None:
+        hard.append({"code": "E101", "message": "no audio stream: render with narration"})
+    elif audio_stream.get("codec_name") != "aac":
+        warnings.append({"code": "E102",
+                         "message": f"audio codec {audio_stream.get('codec_name')}, expected aac"})
+
+    if total > 0:
+        bits = int(fmt.get("size") or 0) * 8
+        kbps = bits / total / 1000
+        checks["bitrate_kbps"] = round(kbps)
+        if kbps < 1000:
+            notices.append({
+                "code": "M111",
+                "message": (
+                    f"bitrate density {kbps:.0f} kbps is low for dense 1080p "
+                    "content; inspect text at 1:1 before publishing"
+                ),
+            })
+
+    if audio_stream is not None:
+        ebur = subprocess.run(
+            ["ffmpeg", "-i", str(video), "-filter_complex",
+             "loudnorm=I=-14:TP=-1.5:LRA=11:print_format=json", "-f", "null", "-"],
+            capture_output=True, text=True)
+        if ebur.returncode == 0 and "{" in ebur.stderr:
+            meas = json.loads(ebur.stderr[ebur.stderr.rindex("{"):ebur.stderr.rindex("}") + 1])
+            integrated = float(meas.get("input_i", "0") or 0)
+            checks["loudness_lufs"] = integrated
+            if not -30 <= integrated <= -5:
+                hard.append({"code": "L101",
+                             "message": f"integrated loudness {integrated:.1f} LUFS outside [-30,-5]"})
+        else:
+            checks["loudness_lufs"] = None
+            print(
+                f"WARN: loudness measurement failed (exit {ebur.returncode}), "
+                f"L101 not evaluated: {ebur.stderr.strip()[-300:]}",
+                flush=True,
+            )
+        filters = {
+            "black": (["-vf", "blackdetect=d=0.5:pix_th=0.05", "-an"], 1.0, 0.3, "B101"),
+            "freeze": (["-vf", "freezedetect=n=-60dB:d=0.5", "-an"], 2.0, 0.8, "T301"),
+            "silence": (["-af", "silencedetect=n=-35dB:d=2", "-vn"], 5.0, 2.0, "E301"),
+        }
+        for name, (args, hard_s, warn_s, code) in filters.items():
+            scan = subprocess.run(
+                ["ffmpeg", "-v", "info", "-i", str(video), *args, "-f", "null", "-"],
+                capture_output=True, text=True)
+            spans = parse_detects(scan.stderr, "start")
+            # freezedetect/blackdetect emit only *_start when the span runs to EOF
+            if total > 0:
+                for span in spans:
+                    if "end" not in span:
+                        span["end"] = max(span["start"], total)
+            lengths = [s["end"] - s["start"] for s in spans if "end" in s]
+            checks[f"{name}_spans"] = [
+                {"start": round(s["start"], 2), "end": round(s.get("end", 0), 2)}
+                for s in spans]
+            if lengths:
+                longest = max(lengths)
+                if longest >= hard_s:
+                    hard.append({"code": code,
+                                 "message": f"longest {name} span {longest:.1f}s >= {hard_s}s at "
+                                            + ", ".join(f"{s['start']:.1f}" for s in spans
+                                                        if "end" in s and s["end"] - s["start"] == longest)})
+                elif longest >= warn_s:
+                    warnings.append({"code": code,
+                                     "message": f"longest {name} span {longest:.1f}s"})
+                if name == "freeze" and total > 0 and sum(lengths) / total >= 0.20:
+                    hard.append({"code": "T304",
+                                 "message": f"frozen frames are {sum(lengths)/total:.0%} of the video; cut waiting segments or raise playback speed"})
+    status = "fail" if hard else "pass"
+    score = max(0, 100 - 10 * len(hard) - 2 * len(warnings))
+    report = {"profile": PROFILE, "status": status, "video": video.name,
+              "video_sha256": sha256(video), "duration_s": round(total, 3),
+              "hard_failures": hard, "warnings": warnings, "notices": notices,
+              "score": {"total": score}, "checks": checks}
+    (work / "report.json").write_text(
+        json.dumps(report, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    return report

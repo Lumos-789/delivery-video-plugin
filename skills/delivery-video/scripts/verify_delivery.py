@@ -10,36 +10,18 @@ optional independent visual review. FAIL means fix the material.
 
 from __future__ import annotations
 
-import argparse
-import hashlib
-import json
-import shutil
-import subprocess
 import sys
 from pathlib import Path
 
+sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from render import feedback_content_sha256  # noqa: E402
 
+import argparse
+import json
+import shutil
+import subprocess
 
-class CheckError(Exception):
-    pass
-
-
-def run_json(args: list[str]) -> dict:
-    try:
-        result = subprocess.run(
-            args,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-        )
-    except OSError as exc:
-        raise CheckError(f"could not run {args[0]}: {exc}") from exc
-    if result.returncode:
-        raise CheckError(f"ffprobe failed: {result.stderr.strip()[-500:]}")
-    return json.loads(result.stdout)
+from dv_core import RenderError, content_sha256, run_json, sha256
 
 
 def probe(path: Path) -> dict:
@@ -55,23 +37,15 @@ def parse_fps(value: str) -> float:
     numerator, _, denominator = value.partition("/")
     divisor = float(denominator or 1)
     if divisor == 0:
-        raise CheckError(f"invalid frame rate: {value}")
+        raise RenderError(f"invalid frame rate: {value}")
     return float(numerator) / divisor
-
-
-def sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def load_json(path: Path) -> dict:
     try:
         return json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        raise CheckError(f"invalid JSON in {path}: {exc}") from exc
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RenderError(f"invalid JSON in {path}: {exc}") from exc
 
 
 def check_shot(prefix: str, shot: Path, evidence_path: Path, errors: list[str]) -> None:
@@ -80,7 +54,7 @@ def check_shot(prefix: str, shot: Path, evidence_path: Path, errors: list[str]) 
         return
     try:
         evidence = load_json(evidence_path)
-    except CheckError as exc:
+    except RenderError as exc:
         errors.append(str(exc))
         return
     if not isinstance(evidence, dict):
@@ -88,7 +62,7 @@ def check_shot(prefix: str, shot: Path, evidence_path: Path, errors: list[str]) 
         return
     kind = evidence.get("kind")
     if kind not in {"cdp-screencast", "browser-demo", "demo-stage-recording"}:
-        errors.append(f"{prefix}: evidence kind {evidence.get('kind')!r} is not a browser/stage recording")
+        errors.append(f"{prefix}: evidence kind {kind!r} is not a browser/stage recording")
         return
     port = evidence.get("port")
     if port is not None and (not isinstance(port, int) or isinstance(port, bool) or port <= 0):
@@ -128,7 +102,7 @@ def check_shot(prefix: str, shot: Path, evidence_path: Path, errors: list[str]) 
         stream = next((s for s in info.get("streams", []) if s.get("codec_type") == "video"), {})
         size = [stream.get("width"), stream.get("height")]
         actual = float(info["format"]["duration"])
-    except (CheckError, KeyError, TypeError, ValueError) as exc:
+    except (RenderError, KeyError, TypeError, ValueError) as exc:
         errors.append(f"{prefix}: evidence duration/size unreadable: {exc}")
         return
     if kind != "demo-stage-recording":
@@ -148,7 +122,7 @@ def check_shot_evidence(build: Path, errors: list[str], warnings: list[str]) -> 
         return 0
     try:
         episode = load_json(episode_path)
-    except CheckError as exc:
+    except RenderError as exc:
         errors.append(str(exc))
         return 0
     segments = episode.get("segments") if isinstance(episode, dict) else None
@@ -199,7 +173,7 @@ def check_feedback_report(build: Path, digest: str, gate: dict) -> list[str]:
         return [f"feedback episode is missing {feedback_path.name}"]
     try:
         feedback = load_json(feedback_path)
-    except CheckError as exc:
+    except RenderError as exc:
         return [str(exc)]
     if not isinstance(feedback, dict):
         return [f"feedback report must be an object: {feedback_path}"]
@@ -247,7 +221,7 @@ def check_feedback_report(build: Path, digest: str, gate: dict) -> list[str]:
             "feedback markdown was edited after rendering "
             f"({markdown_path.name} sha256 mismatch)"
         )
-    if has_binding and binding.get("sha256") != feedback_content_sha256(feedback):
+    if has_binding and binding.get("sha256") != content_sha256(feedback):
         errors.append(
             "feedback report content was edited after rendering "
             "(feedback.json sha256 mismatch); re-render or restore feedback.json"
@@ -287,7 +261,7 @@ def main() -> int:
 
     try:
         data = probe(video)
-    except (CheckError, json.JSONDecodeError) as exc:
+    except (RenderError, json.JSONDecodeError) as exc:
         return fail([str(exc)], warnings)
     streams = data.get("streams") or []
     video_stream = next((item for item in streams if item.get("codec_type") == "video"), None)
@@ -304,7 +278,7 @@ def main() -> int:
             )
         try:
             fps = parse_fps(str(video_stream.get("avg_frame_rate", "0/1")))
-        except (CheckError, ValueError) as exc:
+        except (RenderError, ValueError) as exc:
             errors.append(str(exc))
         else:
             if abs(fps - 30) > 0.01:
@@ -319,7 +293,7 @@ def main() -> int:
         errors.append(f"invalid duration: {duration}")
     try:
         decode = subprocess.run(
-            ["ffmpeg", "-v", "error", "-i", str(video), "-f", "null", "-"],
+            ["ffmpeg", "-nostdin", "-v", "error", "-i", str(video), "-f", "null", "-"],
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -338,7 +312,7 @@ def main() -> int:
     else:
         try:
             gate = load_json(report_path)
-        except CheckError as exc:
+        except RenderError as exc:
             errors.append(str(exc))
         if not isinstance(gate, dict):
             errors.append(f"quality report must be an object: {report_path}")
@@ -374,7 +348,7 @@ def main() -> int:
     if episode_path.is_file():
         try:
             episode = load_json(episode_path)
-        except CheckError as exc:
+        except RenderError as exc:
             errors.append(str(exc))
     # episode.json is outside every hash chain, so a feedback binding in the gate
     # report triggers the tamper checks even when the episode no longer says feedback
@@ -385,7 +359,7 @@ def main() -> int:
     if critic_path.is_file():
         try:
             critic = load_json(critic_path)
-        except CheckError as exc:
+        except RenderError as exc:
             errors.append(str(exc))
             critic = {}
         if not isinstance(critic, dict):

@@ -1,4 +1,3 @@
-import importlib.util
 import json
 import shutil
 import subprocess
@@ -7,21 +6,13 @@ import tempfile
 import unittest
 from pathlib import Path
 
+sys.dont_write_bytecode = True
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / "skills" / "delivery-video" / "scripts"
-
-
-def load_module(name: str, filename: str):
-    spec = importlib.util.spec_from_file_location(name, SCRIPTS / filename)
-    module = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
-    spec.loader.exec_module(module)
-    return module
-
-
-render = load_module("delivery_video_render_binding", "render.py")
-verify = load_module("delivery_video_verify_binding", "verify_delivery.py")
+sys.path.insert(0, str(SCRIPTS))
+import dv_notes  # noqa: E402
+import verify_delivery as verify  # noqa: E402
 
 FFMPEG = shutil.which("ffmpeg")
 FFPROBE = shutil.which("ffprobe")
@@ -110,11 +101,11 @@ class FeedbackReportBindingTests(unittest.TestCase):
             ),
             encoding="utf-8",
         )
-        feedback_path = render.write_feedback_report(cls.base, ISSUE, SEGMENTS, report)
-        markdown_path = render.write_feedback_markdown(
+        feedback_path = dv_notes.write_feedback_report(cls.base, ISSUE, SEGMENTS, report)
+        markdown_path = dv_notes.write_feedback_markdown(
             cls.base, ISSUE, SEGMENTS, TIMELINE, report
         )
-        render.bind_feedback_evidence(report_path, report, feedback_path, markdown_path)
+        dv_notes.bind_feedback_evidence(report_path, report, feedback_path, markdown_path)
 
     @classmethod
     def tearDownClass(cls):
