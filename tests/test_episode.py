@@ -118,5 +118,42 @@ class TopLevelRuleTests(unittest.TestCase):
         self.assertEqual(sum("duplicate id" in error for error in errors), 1)
 
 
+class CardRuleTests(unittest.TestCase):
+    def errors(self, **card) -> list[str]:
+        return errors_for(Path("."), {"voice": "v", "segments": [dict(card, id="c1", kind="card")]})
+
+    def test_a_silent_card_needs_only_a_title(self):
+        self.assertEqual(self.errors(title="两个用例全部通过"), [])
+        self.assertEqual(self.errors(title="开场", duration=1, case="F-01"), [])
+
+    def test_a_narrated_card_follows_its_narration(self):
+        self.assertEqual(self.errors(title="订单名单 2.0", text="这次交付覆盖两个用例。"), [])
+        self.assertIn("duration applies to silent cards",
+                      self.errors(title="x", text="旁白。", duration=2)[0])
+
+    def test_a_card_without_title_or_narration_is_rejected(self):
+        self.assertEqual(self.errors(), ["c1: card needs a title or narration"])
+
+    def test_a_silent_card_duration_stays_in_range(self):
+        self.assertEqual(self.errors(title="x", duration=0.5),
+                         ["c1: card duration must be a number within 1..8s"])
+        self.assertEqual(self.errors(title="x", duration=9),
+                         ["c1: card duration must be a number within 1..8s"])
+
+    def test_a_card_cannot_carry_footage(self):
+        errors = self.errors(title="x", shot="take.mp4", start=0, end=2, source="window")
+        self.assertEqual(sorted(errors), sorted([
+            "c1: a card has no footage; drop 'shot'",
+            "c1: a card has no footage; drop 'source'",
+            "c1: a card has no footage; drop 'start'",
+            "c1: a card has no footage; drop 'end'",
+        ]))
+
+    def test_a_card_title_must_fit_the_frame(self):
+        self.assertIn("card title is too long", self.errors(title="标" * 41)[0])
+        self.assertIn("card title must be a single non-empty line",
+                      self.errors(title="第一行\n第二行")[0])
+
+
 if __name__ == "__main__":
     unittest.main()

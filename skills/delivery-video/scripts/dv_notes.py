@@ -35,16 +35,18 @@ def feedback_payload(issue: dict, segments: list[dict], report: dict) -> dict:
             "report": "quality_gate/report.json",
         },
         "segments": [
-            {
-                "id": segment["id"],
-                "phase": segment.get("phase"),
-                "shot": segment["shot"],
-                "start": segment["start"],
-                "end": segment["end"],
-            }
+            ({"id": segment["id"], "phase": segment.get("phase"), "kind": "card",
+              "title": segment.get("title") or segment["text"]}
+             if segment.get("kind", "shot") == "card" else
+             {"id": segment["id"], "phase": segment.get("phase"),
+              "shot": segment["shot"], "start": segment["start"], "end": segment["end"]})
             for segment in segments
         ],
     }
+
+
+def is_card(item: dict) -> bool:
+    return item.get("kind", "shot") == "card"
 
 
 def feedback_markdown(issue: dict, segments: list[dict], timeline: list[dict],
@@ -59,6 +61,16 @@ def feedback_markdown(issue: dict, segments: list[dict], timeline: list[dict],
     }
     rows = []
     for item in timeline:
+        if is_card(item):
+            rows.append(
+                "| {phase} | {start}-{end} | card: {title} | - |".format(
+                    phase=phases.get(item["id"], "") or "-",
+                    start=format_clock(item["start"]),
+                    end=format_clock(item["end"]),
+                    title=markdown_cell(item["title"]),
+                )
+            )
+            continue
         rows.append(
             "| {phase} | {start}-{end} | `{source}` | {src_start:.2f}-{src_end:.2f}s |".format(
                 phase=phases.get(item["id"], "") or "-",
@@ -172,14 +184,20 @@ def delivery_markdown(episode: dict, timeline: list[dict], report: dict,
         "| --- | --- | --- | --- | --- | --- | --- |",
     ])
     for number, item in enumerate(timeline, 1):
+        head = "{n} | {case} | {label} | {start}-{end}".format(
+            n=number,
+            case=markdown_cell(item.get("case") or "-"),
+            label=markdown_cell(item.get("label") or "-"),
+            start=format_clock(item["start"]),
+            end=format_clock(item["end"]),
+        )
+        if is_card(item):
+            lines.append(f"| {head} | card: {markdown_cell(item['title'])} | - | - |")
+            continue
         lines.append(
-            "| {n} | {case} | {label} | {start}-{end} | `{source}` | {src_start:.2f}-{src_end:.2f}s "
+            "| {head} | `{source}` | {src_start:.2f}-{src_end:.2f}s "
             "| {speed:.2f}x |".format(
-                n=number,
-                case=markdown_cell(item.get("case") or "-"),
-                label=markdown_cell(item.get("label") or "-"),
-                start=format_clock(item["start"]),
-                end=format_clock(item["end"]),
+                head=head,
                 source=markdown_cell(item["source"]),
                 src_start=float(item["source_start"]),
                 src_end=float(item["source_end"]),

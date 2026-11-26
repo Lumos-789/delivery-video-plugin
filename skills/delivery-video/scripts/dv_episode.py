@@ -11,6 +11,10 @@ from pathlib import Path
 
 from dv_core import (
     ALLOWED_SOURCES,
+    CARD_DEFAULT,
+    CARD_MAX,
+    CARD_MIN,
+    CARD_TITLE_MAX,
     DEFAULT_LAYOUT,
     DEMO_STAGE_KIND,
     EVIDENCE_KINDS,
@@ -21,6 +25,7 @@ from dv_core import (
     NARRATION_SOFT_MAX,
     RATE,
     SEGMENT_ID,
+    SEGMENT_KINDS,
     SPEECH_UNITS_PER_SECOND,
     SPEED_MAX,
     SPEED_MIN,
@@ -413,6 +418,50 @@ def valid_evidence(evidence: dict) -> bool:
     return True
 
 
+def narration_text_error(text: object, required: bool) -> str | None:
+    if text is None and not required:
+        return None
+    if not isinstance(text, str) or not text.strip():
+        return "text must be a non-empty string"
+    if "\n" in text or "\r" in text:
+        return "text must be one paragraph without newlines"
+    return None
+
+
+def card_errors(segment: dict, narrated: bool) -> list[str]:
+    """A card is renderer-made: a title, optional narration and no footage."""
+    segment_id = segment["id"]
+    errors: list[str] = []
+    title = segment.get("title")
+    if title is not None and (not isinstance(title, str) or not title.strip()
+                              or "\n" in title or "\r" in title):
+        errors.append(f"{segment_id}: card title must be a single non-empty line")
+    elif isinstance(title, str) and speech_units(title) > CARD_TITLE_MAX:
+        errors.append(
+            f"{segment_id}: card title is too long for the frame "
+            f"({speech_units(title):.0f} units, max {CARD_TITLE_MAX})"
+        )
+    if title is None and not narrated:
+        errors.append(f"{segment_id}: card needs a title or narration")
+    for key in ("shot", "source", "crop", "start", "end"):
+        if segment.get(key) is not None:
+            errors.append(f"{segment_id}: a card has no footage; drop {key!r}")
+    duration = segment.get("duration", CARD_DEFAULT)
+    if not narrated:
+        if isinstance(duration, bool) or not isinstance(duration, (int, float)) \
+                or not CARD_MIN <= duration <= CARD_MAX:
+            errors.append(
+                f"{segment_id}: card duration must be a number within "
+                f"{CARD_MIN:g}..{CARD_MAX:g}s"
+            )
+    elif "duration" in segment:
+        errors.append(
+            f"{segment_id}: duration applies to silent cards; "
+            "a narrated card follows its narration"
+        )
+    return errors
+
+
 def validate_episode(build: Path, episode: dict, report: Validation) -> Validation:
     voice_value = episode.get("voice")
     rate_value = episode.get("rate", "+5%")
@@ -457,17 +506,25 @@ def validate_episode(build: Path, episode: dict, report: Validation) -> Validati
             continue
         seen_ids.add(segment_id)
 
+        kind = segment.get("kind", "shot")
+        if kind not in SEGMENT_KINDS:
+            report.errors.append(
+                f"{segment_id}: kind must be one of {list(SEGMENT_KINDS)}, got {kind!r}"
+            )
+            continue
         label = segment.get("label")
-        if not isinstance(label, str) or not label.strip():
+        if kind == "shot" and not (isinstance(label, str) and label.strip()):
             report.errors.append(f"{segment_id}: label must be a non-empty string")
         text = segment.get("text")
-        text_ok = isinstance(text, str) and bool(text.strip()) and "\n" not in text and "\r" not in text
-        if not isinstance(text, str) or not text.strip():
-            report.errors.append(f"{segment_id}: text must be a non-empty string")
-        elif "\n" in text or "\r" in text:
-            report.errors.append(f"{segment_id}: text must be one paragraph without newlines")
-        else:
+        text_error = narration_text_error(text, required=kind == "shot")
+        if text_error:
+            report.errors.append(f"{segment_id}: {text_error}")
+        elif isinstance(text, str):
             texts.append(text)
+        if kind == "card":
+            report.errors.extend(card_errors(
+                segment, narrated=isinstance(text, str) and text_error is None))
+            continue
 
         shot = segment.get("shot")
         if not isinstance(shot, str) or not shot.strip():
@@ -536,7 +593,7 @@ def validate_episode(build: Path, episode: dict, report: Validation) -> Validati
             f"{segment_id}: {shot} {start:.2f}-{end:.2f}s "
             f"source={width}x{height} duration={source_duration:.2f}s"
         )
-        if voice_ok and rate_ok and text_ok:
+        if voice_ok and rate_ok and text_error is None and isinstance(text, str):
             if check_tts(build, segment, voice_value, rate_value, report):
                 uncached.append(segment_id)
 

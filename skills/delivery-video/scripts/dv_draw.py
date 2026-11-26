@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
-"""Frame furniture: header chips, the repro panel and subtitles."""
+"""Frame furniture: header chips, the repro panel, subtitles and cards."""
 
 from __future__ import annotations
 
 import dataclasses
 
-from dv_core import REPRO_PANEL_LIMIT, W, find_font
+from dv_core import H, REPRO_PANEL_LIMIT, W, find_font
 
 SUBTITLE_Y = 1008
+CARD_TITLE_SIZE = 84
+CARD_MARGIN = 160
+CARD_LINE_GAP = 28
 
 
 @dataclasses.dataclass
@@ -17,10 +20,12 @@ class Fonts:
     case: object
     panel: object
     panel_head: object
+    card: object
 
 
 def load_fonts() -> Fonts:
-    return Fonts(find_font(48), find_font(32), find_font(30), find_font(24), find_font(18))
+    return Fonts(find_font(48), find_font(32), find_font(30), find_font(24), find_font(18),
+                 find_font(CARD_TITLE_SIZE))
 
 
 def header(draw, fonts: Fonts, severity: tuple, case: str, label: str) -> None:
@@ -69,3 +74,58 @@ def subtitle(draw, fonts: Fonts, line: list, layout: str) -> None:
             ((W - width) / 2 - 26, SUBTITLE_Y - 34, (W + width) / 2 + 26, SUBTITLE_Y + 34),
             radius=12, fill=(16, 24, 43))
     draw.text((W / 2, SUBTITLE_Y), text, font=fonts.subtitle, fill="white", anchor="mm")
+
+
+NO_LINE_START = set("、。，；：！？）》」』】…·%,.;:!?)")
+NO_LINE_END = set("（《「『【(")
+
+
+def is_word_char(char: str) -> bool:
+    return char.isascii() and char.isalnum()
+
+
+def wrap_text(text: str, font, max_width: int) -> list[str]:
+    """Greedy wrap by measured width. A Latin word moves to the next line whole
+    (it overflows only when wider than a line by itself); CJK punctuation never
+    opens a line and an opening bracket never ends one."""
+    lines, current = [], ""
+    for char in text:
+        if not current or font.getlength(current + char) <= max_width:
+            current += char
+            continue
+        if not is_word_char(char) or not is_word_char(current[-1]):
+            if char in NO_LINE_START:
+                current += char
+                continue
+            cut = len(current)
+            while cut and current[cut - 1] in NO_LINE_END:
+                cut -= 1
+        else:
+            cut = len(current)
+            while cut and is_word_char(current[cut - 1]):
+                cut -= 1
+            if cut == 0:
+                current += char
+                continue
+        lines.append(current[:cut].rstrip())
+        current = current[cut:].strip() + char
+    if current.strip():
+        lines.append(current.strip())
+    return lines
+
+
+def card_frame(fonts: Fonts, title: str, severity: tuple, case: str, label: str):
+    """A static title card: accent bar above the wrapped title, chips top-left."""
+    from PIL import Image, ImageDraw
+    frame = Image.new("RGB", (W, H), (16, 24, 43))
+    draw = ImageDraw.Draw(frame)
+    header(draw, fonts, severity, case, label)
+    lines = wrap_text(title, fonts.card, W - 2 * CARD_MARGIN)
+    line_h = CARD_TITLE_SIZE + CARD_LINE_GAP
+    top = 540 - line_h * len(lines) // 2 + 40
+    draw.rounded_rectangle((CARD_MARGIN, top - 60, CARD_MARGIN + 56, top - 54), radius=3,
+                           fill=(59, 130, 246))
+    for index, line in enumerate(lines):
+        draw.text((CARD_MARGIN, top + index * line_h), line, font=fonts.card,
+                  fill=(255, 255, 255))
+    return frame

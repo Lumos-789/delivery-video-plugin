@@ -53,7 +53,8 @@ class QualityGateDetectTests(unittest.TestCase):
     def tearDown(self):
         self._tmp.cleanup()
 
-    def run_gate(self, detect_logs: dict[str, str], frame_rate: str = "30/1") -> dict:
+    def run_gate(self, detect_logs: dict[str, str], frame_rate: str = "30/1",
+                exempt: list | None = None) -> dict:
         probe = {
             "streams": [
                 {"codec_type": "video", "codec_name": "h264",
@@ -77,7 +78,7 @@ class QualityGateDetectTests(unittest.TestCase):
             raise AssertionError(f"unexpected command: {args}")
 
         with mock.patch.object(dv_gate.subprocess, "run", side_effect=fake_run):
-            return dv_gate.quality_gate(self.video, self.work)
+            return dv_gate.quality_gate(self.video, self.work, exempt)
 
     def test_black_without_space_after_colon_triggers_b101(self):
         report = self.run_gate({
@@ -112,6 +113,45 @@ class QualityGateDetectTests(unittest.TestCase):
         }, frame_rate="0/0")
         codes = [item["code"] for item in report["hard_failures"]]
         self.assertIn("M102", codes)
+        self.assertEqual(report["status"], "fail")
+
+
+    def test_exempt_intervals_hide_freeze_and_silence_inside_them(self):
+        logs = {
+            "blackdetect": "",
+            "freezedetect": "[Parsed_freezedetect_0 @ 0x7cc7018c00] "
+                            "lavfi.freezedetect.freeze_start: 0.2\n"
+                            "lavfi.freezedetect.freeze_end: 2.8\n",
+            "silencedetect": "[Parsed_silencedetect_0 @ 0x7a41010c00] silence_start: 0.1\n"
+                             "[Parsed_silencedetect_0 @ 0x7a41010c00] silence_end: 2.9\n",
+        }
+        card = [{"start": 0.0, "end": 3.0}]
+
+        plain = self.run_gate(logs)
+        exempt = self.run_gate(logs, exempt=card)
+
+        self.assertIn("T301", [item["code"] for item in plain["hard_failures"]])
+        self.assertEqual(exempt["status"], "pass")
+        self.assertEqual(exempt["checks"]["freeze_spans"], [])
+        self.assertEqual(exempt["checks"]["silence_spans"], [])
+        self.assertEqual(exempt["exempt"]["seconds"], 3.0)
+
+    def test_only_the_part_of_a_span_outside_the_card_counts(self):
+        logs = {
+            "blackdetect": "",
+            "freezedetect": "[Parsed_freezedetect_0 @ 0x7cc7018c00] "
+                            "lavfi.freezedetect.freeze_start: 2.0\n"
+                            "lavfi.freezedetect.freeze_end: 4.0\n",
+            "silencedetect": "",
+        }
+        report = self.run_gate(logs, exempt=[{"start": 0.0, "end": 2.5}])
+        self.assertEqual(report["checks"]["freeze_spans"], [{"start": 2.5, "end": 4.0}])
+        self.assertEqual(report["status"], "pass")
+
+    def test_cards_may_not_cover_more_than_a_quarter_of_the_video(self):
+        report = self.run_gate({"blackdetect": "", "freezedetect": "", "silencedetect": ""},
+                               exempt=[{"start": 0.0, "end": 4.0}, {"start": 6.0, "end": 11.0}])
+        self.assertIn("C301", [item["code"] for item in report["hard_failures"]])
         self.assertEqual(report["status"], "fail")
 
 

@@ -8,7 +8,7 @@ import re
 import subprocess
 from pathlib import Path
 
-from dv_core import FPS, H, PROFILE, W, probe_json, sha256
+from dv_core import CARD_SHARE_MAX, FPS, H, PROFILE, W, probe_json, sha256
 
 
 def parse_detects(log: str, key: str) -> list[dict]:
@@ -31,14 +31,43 @@ def parse_detects(log: str, key: str) -> list[dict]:
     return events
 
 
-def quality_gate(video: Path, work: Path) -> dict:
-    """Deterministic delivery gate; hard failures make status=fail."""
+def subtract(spans: list[dict], exempt: list[dict]) -> list[dict]:
+    """Cut the exempt intervals out of every detected span."""
+    kept: list[dict] = []
+    for span in spans:
+        pieces = [(span["start"], span["end"])]
+        for interval in exempt:
+            remaining = []
+            for start, end in pieces:
+                if interval["end"] <= start or interval["start"] >= end:
+                    remaining.append((start, end))
+                    continue
+                if interval["start"] > start:
+                    remaining.append((start, interval["start"]))
+                if interval["end"] < end:
+                    remaining.append((interval["end"], end))
+            pieces = remaining
+        kept.extend({"start": start, "end": end}
+                    for start, end in pieces if end - start >= 0.05)
+    return kept
+
+
+def quality_gate(video: Path, work: Path, exempt: list[dict] | None = None) -> dict:
+    """Deterministic delivery gate; hard failures make status=fail.
+
+    `exempt` holds in-video intervals that are static and silent by design
+    (cards); they are cut out of every detected span before thresholds apply.
+    """
     work.mkdir(parents=True, exist_ok=True)
     hard, warnings, notices, checks = [], [], [], {}
     info = probe_json(video)
     streams = info.get("streams") or []
     fmt = info.get("format") or {}
     total = float(fmt.get("duration") or 0)
+    cards = sorted(({"start": max(0.0, float(item["start"])),
+                     "end": max(0.0, float(item["end"]))} for item in exempt or []),
+                   key=lambda item: item["start"])
+    card_s = sum(max(0.0, min(item["end"], total) - item["start"]) for item in cards)
 
     video_stream = next((s for s in streams if s.get("codec_type") == "video"), None)
     audio_stream = next((s for s in streams if s.get("codec_type") == "audio"), None)
@@ -78,10 +107,15 @@ def quality_gate(video: Path, work: Path) -> dict:
                     "content; inspect text at 1:1 before publishing"
                 ),
             })
+        if card_s / total > CARD_SHARE_MAX:
+            hard.append({"code": "C301",
+                         "message": f"static cards cover {card_s / total:.0%} of the video "
+                                    f"(max {CARD_SHARE_MAX:.0%}); cards frame the result, "
+                                    "they must not carry the demo"})
 
     if audio_stream is not None:
         ebur = subprocess.run(
-            ["ffmpeg", "-i", str(video), "-filter_complex",
+            ["ffmpeg", "-nostdin", "-i", str(video), "-filter_complex",
              "loudnorm=I=-14:TP=-1.5:LRA=11:print_format=json", "-f", "null", "-"],
             capture_output=True, text=True)
         if ebur.returncode == 0 and "{" in ebur.stderr:
@@ -105,7 +139,7 @@ def quality_gate(video: Path, work: Path) -> dict:
         }
         for name, (args, hard_s, warn_s, code) in filters.items():
             scan = subprocess.run(
-                ["ffmpeg", "-v", "info", "-i", str(video), *args, "-f", "null", "-"],
+                ["ffmpeg", "-nostdin", "-v", "info", "-i", str(video), *args, "-f", "null", "-"],
                 capture_output=True, text=True)
             spans = parse_detects(scan.stderr, "start")
             # freezedetect/blackdetect emit only *_start when the span runs to EOF
@@ -113,29 +147,36 @@ def quality_gate(video: Path, work: Path) -> dict:
                 for span in spans:
                     if "end" not in span:
                         span["end"] = max(span["start"], total)
-            lengths = [s["end"] - s["start"] for s in spans if "end" in s]
+            spans = subtract(spans, cards)
+            lengths = [s["end"] - s["start"] for s in spans]
             checks[f"{name}_spans"] = [
-                {"start": round(s["start"], 2), "end": round(s.get("end", 0), 2)}
-                for s in spans]
+                {"start": round(s["start"], 2), "end": round(s["end"], 2)} for s in spans]
             if lengths:
                 longest = max(lengths)
                 if longest >= hard_s:
                     hard.append({"code": code,
                                  "message": f"longest {name} span {longest:.1f}s >= {hard_s}s at "
                                             + ", ".join(f"{s['start']:.1f}" for s in spans
-                                                        if "end" in s and s["end"] - s["start"] == longest)})
+                                                        if s["end"] - s["start"] == longest)})
                 elif longest >= warn_s:
                     warnings.append({"code": code,
                                      "message": f"longest {name} span {longest:.1f}s"})
-                if name == "freeze" and total > 0 and sum(lengths) / total >= 0.20:
+                footage = total - card_s
+                if name == "freeze" and footage > 0 and sum(lengths) / footage >= 0.20:
                     hard.append({"code": "T304",
-                                 "message": f"frozen frames are {sum(lengths)/total:.0%} of the video; cut waiting segments or raise playback speed"})
+                                 "message": f"frozen frames are {sum(lengths)/footage:.0%} of the footage; cut waiting segments or raise playback speed"})
     status = "fail" if hard else "pass"
     score = max(0, 100 - 10 * len(hard) - 2 * len(warnings))
     report = {"profile": PROFILE, "status": status, "video": video.name,
               "video_sha256": sha256(video), "duration_s": round(total, 3),
               "hard_failures": hard, "warnings": warnings, "notices": notices,
               "score": {"total": score}, "checks": checks}
+    if cards:
+        report["exempt"] = {
+            "intervals": [{"start": round(item["start"], 3), "end": round(item["end"], 3)}
+                          for item in cards],
+            "seconds": round(card_s, 3),
+        }
     (work / "report.json").write_text(
         json.dumps(report, ensure_ascii=False, indent=2),
         encoding="utf-8",

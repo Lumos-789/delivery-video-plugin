@@ -60,12 +60,12 @@ def make_take(path: Path, seconds: int = 12, pattern: str = "testsrc2",
            "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p", str(path))
 
 
-def seed_narration(build: Path, segment: dict) -> None:
+def seed_narration(build: Path, segment: dict, seconds: float = 2.0) -> None:
     """Pre-populate the narration cache so rendering needs no network."""
     mp3, clock = dv_tts.cache_files(build, segment["id"], segment["text"],
                                     segment.get("_voice", VOICE), segment.get("_rate", "+5%"))
     mp3.parent.mkdir(exist_ok=True)
-    ffmpeg("-f", "lavfi", "-i", "sine=frequency=440:duration=2", "-c:a", "libmp3lame",
+    ffmpeg("-f", "lavfi", "-i", f"sine=frequency=440:duration={seconds}", "-c:a", "libmp3lame",
            "-b:a", "64k", str(mp3))
     tokens = [segment["text"][index:index + 2] for index in range(0, len(segment["text"]), 2)]
     words = [{"char": token, "start_ms": 250 + index * 500, "end_ms": 600 + index * 500}
@@ -90,6 +90,20 @@ SEGMENTS = [
     {"id": "02-readback", "label": "回读", "shot": "take.mp4", "start": 4.0, "end": 6.6,
      "text": "刷新页面结果仍然生效"},
 ]
+
+
+def card_episode() -> dict:
+    episode = delivery_episode()
+    episode["segments"] = [
+        {"id": "00-open", "kind": "card", "label": "交付演示", "title": "订单任务名单 2.0",
+         "text": "这次交付覆盖负责人转派和空选校验。"},
+        {"id": "01-open", "label": "打开", "shot": "take.mp4", "start": 0.5, "end": 7.5,
+         "text": "打开页面点击保存"},
+        {"id": "02-readback", "label": "回读", "shot": "take.mp4", "start": 4.0, "end": 11.0,
+         "text": "刷新页面结果仍然生效"},
+        {"id": "99-close", "kind": "card", "title": "两个用例全部通过，等待验收", "duration": 1.5},
+    ]
+    return episode
 
 
 def delivery_episode() -> dict:
@@ -360,6 +374,53 @@ class OfflineRenderTests(unittest.TestCase):
 
         self.assertEqual(code, 0, output)
         self.assertIn("1280x720 is smaller than the 1920x1080 canvas", output)
+
+
+    def render_cards(self, name: str) -> tuple[Path, int, str]:
+        build = self.copy(name)
+        episode = card_episode()
+        for segment in episode["segments"]:
+            if segment.get("text"):
+                seed_narration(build, segment, seconds=6 if segment.get("shot") else 2)
+        write_episode(build, episode)
+        code, output = run(str(SCRIPTS / "render.py"), "render", str(build))
+        return build, code, output
+
+    def test_cards_open_and_close_the_video_and_pass_the_gate(self):
+        build, code, output = self.render_cards("screen_demo-cards")
+
+        self.assertEqual(code, 0, output)
+        self.assertIn("gate=pass", output)
+        timeline = self.timeline(build)
+        self.assertEqual([item["kind"] for item in timeline], ["card", "shot", "shot", "card"])
+        self.assertEqual(timeline[0]["title"], "订单任务名单 2.0")
+        self.assertAlmostEqual(timeline[-1]["end"] - timeline[-1]["start"], 1.5, places=3)
+        report = self.report(build)
+        self.assertEqual([(item["start"], item["end"]) for item in report["exempt"]["intervals"]],
+                         [(timeline[0]["start"], timeline[0]["end"]),
+                          (timeline[-1]["start"], timeline[-1]["end"])])
+        note = (build / "delivery.generated.md").read_text(encoding="utf-8")
+        self.assertIn("card: 两个用例全部通过，等待验收", note)
+        self.assertIn("card: 订单任务名单 2.0", note)
+        code, output = run(str(SCRIPTS / "verify_delivery.py"), str(build))
+        self.assertEqual(code, 0, output)
+
+    def test_attachment_gate_needs_the_timeline_to_accept_static_cards(self):
+        build, code, output = self.render_cards("screen_demo-cards-gate")
+        self.assertEqual(code, 0, output)
+        video = build / "screen_demo.mp4"
+
+        code, output = run(str(SCRIPTS / "render.py"), "gate", "--video", str(video),
+                           "--work", str(build / "attach-plain"))
+        self.assertEqual(code, 1, output)
+        self.assertIn("T301", output)
+        self.assertIn("--timeline", output)
+
+        code, output = run(str(SCRIPTS / "render.py"), "gate", "--video", str(video),
+                           "--work", str(build / "attach-timeline"),
+                           "--timeline", str(build / "timeline.json"))
+        self.assertEqual(code, 0, output)
+        self.assertIn("GATE=PASS", output)
 
 
 if __name__ == "__main__":

@@ -29,6 +29,12 @@ SPEECH_UNITS_PER_SECOND = 4.2
 MAX_LINE = 24
 MIN_EDGE_TTS = (7, 3, 1)
 INTENTS = {"delivery", "feedback"}
+SEGMENT_KINDS = ("shot", "card")
+# Cards are static by design: the gate exempts their intervals from the freeze and
+# silence scans, within these limits.
+CARD_MIN, CARD_MAX, CARD_DEFAULT = 1.0, 8.0, 2.5
+CARD_TITLE_MAX = 40
+CARD_SHARE_MAX = 0.25
 SEVERITIES = {
     "blocker": ("P0 BLOCKER", (220, 38, 38)),
     "critical": ("P1 CRITICAL", (234, 88, 12)),

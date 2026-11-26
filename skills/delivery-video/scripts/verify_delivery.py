@@ -137,6 +137,8 @@ def check_shot_evidence(build: Path, errors: list[str], warnings: list[str]) -> 
             errors.append(f"segments[{index}] must be an object")
             continue
         prefix = segment.get("id") or f"segments[{index}]"
+        if segment.get("kind", "shot") == "card":
+            continue
         shot_name = segment.get("shot")
         if not isinstance(shot_name, str) or not shot_name:
             errors.append(f"{prefix}: shot must be a relative path")
