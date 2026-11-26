@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Verify a rendered screen_demo delivery artifact and its quality evidence.
 
-Usage: verify_delivery.py <build-dir> [--require-critic]
+Usage: verify_delivery.py <build-dir>
 
 Checks the final mp4 spec (h264/1920x1080/30fps/aac), decode integrity, the
-quality-gate report binding (video_sha256), per-shot evidence files and the
-optional independent visual review. FAIL means fix the material.
+quality-gate report bindings (the script, timeline, takes and generated note),
+per-shot evidence files and the visual review record. FAIL means fix the material.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ import json
 import shutil
 import subprocess
 
-from dv_core import RenderError, content_sha256, run_json, sha256
+from dv_core import DIMENSIONS, RenderError, content_sha256, run_json, sha256
 
 
 def probe(path: Path) -> dict:
@@ -296,16 +296,73 @@ def check_bindings(build: Path, episode: object, gate: dict, errors: list[str]) 
                 errors.append(f"{path.name}: delivery note is missing")
             elif sha256(path) != binding["sha256"]:
                 errors.append(f"{path.name} was edited after rendering (sha256 mismatch)")
+    return timeline if isinstance(timeline, list) else None
+
+
+def check_critic(build: Path, digest: str, timeline: object, length: float,
+                 errors: list[str]) -> None:
+    """The visual review is a record, not a formality: scored, attributed to a
+    reviewer, bound to this artifact, and covering every segment and the ending."""
+    path = build / "visual-critic.json"
+    if not path.is_file():
+        errors.append(
+            f"missing visual review: {path} -- look at review/sheet_*.png and "
+            "review/frames/, complete review/critic.draft.json, save it as "
+            "visual-critic.json"
+        )
+        return
+    try:
+        critic = load_json(path)
+    except RenderError as exc:
+        errors.append(str(exc))
+        return
+    if not isinstance(critic, dict):
+        errors.append(f"visual critic must be an object: {path}")
+        return
+    if critic.get("status") != "pass":
+        errors.append(f"visual critic status is {critic.get('status')!r}")
+    if critic.get("critical"):
+        errors.append(f"visual critic has {len(critic['critical'])} critical item(s)")
+    if critic.get("video_sha256") != digest:
+        errors.append("visual critic video_sha256 does not match the current artifact")
+    reviewer = critic.get("reviewer")
+    if not isinstance(reviewer, str) or not reviewer.strip():
+        errors.append("visual critic names no reviewer")
+    dimensions = critic.get("dimensions")
+    for name in DIMENSIONS:
+        score = dimensions.get(name) if isinstance(dimensions, dict) else None
+        if isinstance(score, bool) or not isinstance(score, (int, float)) \
+                or not 0 <= score <= 1:
+            errors.append(f"visual critic dimension {name} is not scored (a 0..1 number)")
+    frames = critic.get("reviewed_frames")
+    if not isinstance(frames, list) or not frames:
+        errors.append("visual critic lists no reviewed frames")
+        return
+    times = [float(frame["time_s"]) for frame in frames
+             if isinstance(frame, dict) and isinstance(frame.get("time_s"), (int, float))
+             and not isinstance(frame.get("time_s"), bool)]
+    if isinstance(timeline, list):
+        for item in timeline:
+            if not isinstance(item, dict):
+                continue
+            try:
+                start, end = float(item["start"]), float(item["end"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if not any(start - 0.05 <= time <= end + 0.05 for time in times):
+                errors.append(f"visual critic reviewed no frame inside segment {item.get('id')}")
+    if length > 0 and not any(time <= 1.0 for time in times):
+        errors.append("visual critic reviewed no frame in the first second")
+    if length > 0 and not any(time >= length - 1.0 for time in times):
+        errors.append(
+            "visual critic reviewed no frame in the last second; "
+            "the video must end on a result state"
+        )
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("build", type=Path, help="screen_demo[-<slug>] build directory")
-    parser.add_argument(
-        "--require-critic",
-        action="store_true",
-        help="fail when visual-critic.json is missing",
-    )
     args = parser.parse_args()
 
     build = args.build.expanduser().resolve()
@@ -405,7 +462,6 @@ def main() -> int:
             f"{item.get('code')}: {item.get('message')}"
             for item in (gate.get("notices") or [])
         )
-    critic_path = build / "visual-critic.json"
     digest = sha256(video)
     if gate and gate.get("video_sha256") != digest:
         errors.append(
@@ -419,31 +475,15 @@ def main() -> int:
             episode = load_json(episode_path)
         except RenderError as exc:
             errors.append(str(exc))
-    if gate:
-        check_bindings(build, episode, gate, errors)
+    timeline = check_bindings(build, episode, gate, errors) if gate else None
     # A feedback binding in the gate report triggers the tamper checks even when the
     # episode no longer says feedback.
     binding = gate.get("feedback") if isinstance(gate, dict) else None
     feedback_episode = isinstance(episode, dict) and episode.get("intent") == "feedback"
     if feedback_episode or (isinstance(binding, dict) and binding):
         errors.extend(check_feedback_report(build, digest, gate))
-    if critic_path.is_file():
-        try:
-            critic = load_json(critic_path)
-        except RenderError as exc:
-            errors.append(str(exc))
-            critic = {}
-        if not isinstance(critic, dict):
-            errors.append(f"visual critic must be an object: {critic_path}")
-            critic = {}
-        if critic.get("status") != "pass":
-            errors.append(f"visual critic status is {critic.get('status')!r}")
-        if critic.get("critical"):
-            errors.append(f"visual critic has {len(critic['critical'])} critical item(s)")
-        if critic.get("video_sha256") != digest:
-            errors.append("visual critic video_sha256 does not match the current artifact")
-    elif args.require_critic:
-        errors.append(f"missing independent visual review: {critic_path}")
+    length = 0.0 if duration in (None, "N/A") else float(duration)
+    check_critic(build, digest, timeline, length, errors)
 
     shot_count = check_shot_evidence(build, errors, warnings)
     for notice in notices:

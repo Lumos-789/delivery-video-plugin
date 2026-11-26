@@ -152,10 +152,75 @@ class OfflineRenderTests(unittest.TestCase):
         self.assertEqual(timeline[0]["start"], 0)
         self.assertAlmostEqual(timeline[0]["end"], timeline[1]["start"], places=3)
 
-    def test_verify_passes_on_the_fresh_artifact(self):
-        code, output = run(str(SCRIPTS / "verify_delivery.py"), str(self.build))
+    def complete_review(self, build: Path, keep=None, **overrides) -> Path:
+        draft = json.loads((build / "review" / "critic.draft.json").read_text(encoding="utf-8"))
+        frames = [frame for frame in draft["reviewed_frames"] if keep is None or keep(frame)]
+        review = dict(draft, status="pass", reviewer="second-window reviewer",
+                      dimensions={name: 0.9 for name in draft["dimensions"]},
+                      reviewed_frames=frames)
+        review.update(overrides)
+        path = build / "visual-critic.json"
+        path.write_text(json.dumps(review, ensure_ascii=False, indent=1), encoding="utf-8")
+        return path
+
+    def verify(self, build: Path) -> tuple[int, str]:
+        return run(str(SCRIPTS / "verify_delivery.py"), str(build))
+
+    def test_review_packet_covers_every_segment_with_three_frames(self):
+        review = self.build / "review"
+        self.assertEqual(sorted(path.name for path in (review / "frames").glob("*.png")),
+                         ["01-open-end.png", "01-open-mid.png", "01-open-start.png",
+                          "02-readback-end.png", "02-readback-mid.png", "02-readback-start.png"])
+        self.assertTrue((review / "sheet_01.png").is_file())
+        self.assertEqual(list(self.build.glob("preview_*.png")), [])
+        draft = json.loads((review / "critic.draft.json").read_text(encoding="utf-8"))
+        self.assertEqual(draft["status"], "pending")
+        self.assertEqual(draft["video_sha256"], self.report(self.build)["video_sha256"])
+        self.assertEqual([frame["segment"] for frame in draft["reviewed_frames"]],
+                         ["01-open"] * 3 + ["02-readback"] * 3)
+        for frame in draft["reviewed_frames"]:
+            self.assertTrue((self.build / frame["frame"]).is_file(), frame["frame"])
+
+    def test_verify_requires_a_completed_visual_review(self):
+        code, output = self.verify(self.build)
+        self.assertEqual(code, 1, output)
+        self.assertIn("missing visual review", output)
+
+    def test_verify_accepts_a_completed_visual_review(self):
+        build = self.copy("screen_demo-reviewed")
+        self.complete_review(build)
+
+        code, output = self.verify(build)
+
         self.assertEqual(code, 0, output)
         self.assertIn("DELIVERY=PASS", output)
+
+    def test_verify_rejects_a_review_that_skips_a_segment(self):
+        build = self.copy("screen_demo-partial-review")
+        self.complete_review(build, keep=lambda frame: frame["segment"] != "02-readback")
+
+        code, output = self.verify(build)
+
+        self.assertEqual(code, 1, output)
+        self.assertIn("reviewed no frame inside segment 02-readback", output)
+
+    def test_verify_rejects_a_review_that_skips_the_ending(self):
+        build = self.copy("screen_demo-no-ending")
+        self.complete_review(build, keep=lambda frame: not frame["frame"].endswith("-end.png"))
+
+        code, output = self.verify(build)
+
+        self.assertEqual(code, 1, output)
+        self.assertIn("last second", output)
+
+    def test_verify_rejects_a_review_left_pending_or_unscored(self):
+        build = self.copy("screen_demo-pending-review")
+        self.complete_review(build, status="pending", dimensions={}, reviewer="")
+        code, output = self.verify(build)
+        self.assertEqual(code, 1, output)
+        self.assertIn("visual critic status is 'pending'", output)
+        self.assertIn("subtitle_legibility is not scored", output)
+        self.assertIn("names no reviewer", output)
 
     def test_render_refuses_a_browser_segment_without_evidence(self):
         build = self.copy("screen_demo-noevidence")
@@ -402,7 +467,8 @@ class OfflineRenderTests(unittest.TestCase):
         note = (build / "delivery.generated.md").read_text(encoding="utf-8")
         self.assertIn("card: 两个用例全部通过，等待验收", note)
         self.assertIn("card: 订单任务名单 2.0", note)
-        code, output = run(str(SCRIPTS / "verify_delivery.py"), str(build))
+        self.complete_review(build)
+        code, output = self.verify(build)
         self.assertEqual(code, 0, output)
 
     def test_attachment_gate_needs_the_timeline_to_accept_static_cards(self):

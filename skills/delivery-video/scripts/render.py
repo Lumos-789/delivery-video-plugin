@@ -57,6 +57,7 @@ from dv_notes import (
     write_report,
 )
 from dv_tts import Narration, group_lines, synth
+from dv_review import build_review
 
 
 def segment_filter(crop: list[int] | None, layout: str, speed: float,
@@ -372,10 +373,6 @@ def cmd_render(build: Path) -> int:
         raise RenderError(f"final duration {duration(final):.3f}s != expected {offset:.3f}s")
     run(["ffmpeg", "-nostdin", "-y", "-v", "error", "-ss", "2", "-i", str(final),
          "-frames:v", "1", str(build / "cover.png")])
-    for index, item in enumerate(timeline):
-        run(["ffmpeg", "-nostdin", "-y", "-v", "error",
-             "-ss", str((item["start"] + item["end"]) / 2), "-i", str(final),
-             "-frames:v", "1", str(build / f"preview_{index:02d}.png")])
     timeline_path = build / "timeline.json"
     timeline_path.write_text(
         json.dumps(timeline, ensure_ascii=False, indent=2),
@@ -405,6 +402,10 @@ def cmd_render(build: Path) -> int:
         report["delivery"] = {"file": note_path.name, "sha256": sha256(note_path)}
         write_report(build / "quality_gate" / "report.json", report)
         print(f"NOTE {note_path}", flush=True)
+    draft = build_review(build, final, timeline, report["video_sha256"])
+    print(f"NOTE review packet: {draft.parent} -- look at sheet_*.png and frames/, "
+          "complete critic.draft.json as visual-critic.json, then run "
+          "verify_delivery.py", flush=True)
     print(f"COMPLETE {final} duration={duration(final):.3f}s "
           f"gate={report['status']} score={report['score']['total']}", flush=True)
     for notice in report["notices"]:

@@ -113,6 +113,12 @@ class FeedbackReportBindingTests(unittest.TestCase):
         }
         report_path = cls.base / "quality_gate" / "report.json"
         report_path.write_text(json.dumps(report), encoding="utf-8")
+        (cls.base / "visual-critic.json").write_text(json.dumps({
+            "status": "pass", "critical": [], "reviewer": "fixture reviewer",
+            "dimensions": {name: 0.9 for name in dv_core.DIMENSIONS},
+            "reviewed_frames": [{"time_s": 0.5}, {"time_s": 1.5}, {"time_s": 1.6}],
+            "video_sha256": digest,
+        }), encoding="utf-8")
         feedback_path = dv_notes.write_feedback_report(cls.base, ISSUE, SEGMENTS, report)
         markdown_path = dv_notes.write_feedback_markdown(
             cls.base, ISSUE, SEGMENTS, TIMELINE, report

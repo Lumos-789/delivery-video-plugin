@@ -35,6 +35,14 @@ SEGMENT_KINDS = ("shot", "card")
 CARD_MIN, CARD_MAX, CARD_DEFAULT = 1.0, 8.0, 2.5
 CARD_TITLE_MAX = 40
 CARD_SHARE_MAX = 0.25
+# What a visual review must score, one 0..1 number each.
+DIMENSIONS = (
+    "subtitle_legibility",
+    "subtitle_safe_margins",
+    "interface_legibility",
+    "composition",
+    "business_content_alignment",
+)
 SEVERITIES = {
     "blocker": ("P0 BLOCKER", (220, 38, 38)),
     "critical": ("P1 CRITICAL", (234, 88, 12)),
