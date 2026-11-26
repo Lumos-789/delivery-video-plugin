@@ -11,14 +11,20 @@ from pathlib import Path
 
 from dv_core import (
     ALLOWED_SOURCES,
+    DEFAULT_LAYOUT,
     DEMO_STAGE_KIND,
     EVIDENCE_KINDS,
     FPS,
+    H,
+    LATIN_WEIGHT,
     LAYOUTS,
+    NARRATION_SOFT_MAX,
     RATE,
     SEGMENT_ID,
+    SPEECH_UNITS_PER_SECOND,
     SPEED_MAX,
     SPEED_MIN,
+    W,
     RenderError,
     check_edge_tts_version,
     check_pillow,
@@ -31,23 +37,68 @@ from dv_core import (
 )
 from dv_tts import cache_files, read_clock, segment_seconds
 
-# TTS reading of these chars depends on context (e.g. 行 háng/xíng): confirm each hit or rewrite
+# TTS reading of these chars depends on context. `safe` words have one reading and stay quiet;
+# `watch` words are the only places a char is flagged when its everyday reading is the default.
+@dataclasses.dataclass(frozen=True)
+class Polyphone:
+    hint: str
+    safe: tuple = ()
+    watch: tuple = ()
+    watch_before: str = ""
+
+
 POLYPHONES = {
-    "行": "háng 表格行 / xíng 行走——表格「一行」建议改用「一条」",
-    "重": "zhòng 重量 / chóng 重新、重复",
-    "还": "hái 还有 / huán 归还",
-    "都": "dōu 都是 / dū 首都",
-    "长": "cháng 长度 / zhǎng 增长",
-    "得": "dé 得到 / de 跑得快 / děi 得去",
-    "着": "zhe 看着 / zháo 着急 / zhuó 着重",
-    "差": "chà 差一点 / chā 差别 / chāi 出差",
-    "数": "shù 数量 / shǔ 数一数",
-    "干": "gàn 干活 / gān 干净",
-    "应": "yīng 应该 / yìng 响应",
-    "结": "jié 结果 / jiē 结实",
-    "系": "xì 系统 / jì 系鞋带",
-    "弹": "tán 弹出 / dàn 子弹",
-    "屏": "píng 屏幕 / bǐng 屏息",
+    "行": Polyphone("háng 表格行 / xíng 行走——表格「一行」建议改用「一条」", safe=(
+        "执行", "运行", "进行", "就行", "也行", "能行", "不行", "可行", "行了", "行为", "行动",
+        "自行", "流行", "发行", "步行", "行政", "行使", "行程", "强行", "银行", "行业", "行内",
+        "分行", "行号", "换行", "行距", "数据行", "每行", "各行", "该行", "首行", "末行")),
+    "重": Polyphone("zhòng 重量 / chóng 重新、重复", safe=(
+        "重新", "重写", "重做", "重录", "重置", "重复", "重试", "重启", "重来", "重申", "重构",
+        "重现", "重播", "重命名", "重合", "重叠", "重温", "重建", "重组", "重发", "重算", "重跑",
+        "重量", "重点", "重要", "严重", "重大", "注重", "多重", "侧重", "沉重", "繁重", "重度",
+        "看重", "重视", "尊重", "敬重", "轻重", "保重", "稳重", "郑重", "隆重", "慎重", "厚重",
+        "浓重", "重担")),
+    "还": Polyphone("hái 还有 / huán 归还", watch=(
+        "归还", "偿还", "退还", "还款", "还原", "还回", "还钱", "还书", "还债", "奉还",
+        "还手", "还击", "还价", "还嘴", "发还", "返还", "还乡", "还俗", "交还")),
+    "都": Polyphone("dōu 都是 / dū 首都", watch=(
+        "首都", "成都", "都市", "都城", "古都", "国都", "定都", "建都", "都督", "陪都", "故都",
+        "迁都")),
+    "长": Polyphone("cháng 长度 / zhǎng 增长", safe=(
+        "最长", "超长", "长度", "长时间", "长期", "长短", "漫长", "冗长", "长篇", "长城", "长久",
+        "长途", "悠长", "细长", "长处", "增长", "成长", "长出", "校长", "队长", "组长", "部长",
+        "局长", "市长", "厂长", "会长", "社长", "家长", "团长", "董事长", "首长", "滋长")),
+    "得": Polyphone("dé 得到 / de 跑得快 / děi 得去", safe=(
+        "觉得", "懂得", "显得", "记得", "认得", "晓得", "舍得", "省得", "免得", "来得及",
+        "来不得", "对得起", "得到", "获得", "取得", "值得", "心得", "得出", "得知", "不得不",
+        "得意"), watch=("得去", "得要", "得先", "得靠", "得等"),
+        watch_before="这那我你他她它们谁啥"),
+    "着": Polyphone("zhe 看着 / zháo 着急 / zhuó 着重", watch=(
+        "着急", "着火", "着凉", "着迷", "着眼", "着重", "着手", "着想", "着落", "着装", "着实",
+        "着力", "着色", "着陆", "沉着", "执着", "附着", "穿着", "睡着", "着数")),
+    "差": Polyphone("chà 差一点 / chā 差别 / chāi 出差", safe=(
+        "差别", "差异", "误差", "时差", "偏差", "温差", "落差", "差值", "差额", "差距", "视差",
+        "色差", "价差", "差一点", "差不多", "差点", "很差", "太差", "较差", "差劲", "最差",
+        "出差")),
+    "数": Polyphone("shù 数量 / shǔ 数一数", watch=(
+        "数一数", "数不清", "数得清", "数不过来", "数来数去", "数数", "数落", "数九", "数得上",
+        "数不上", "屈指可数", "数不胜数")),
+    "干": Polyphone("gàn 干活 / gān 干净", watch=("干系", "相干", "外强中干")),
+    "应": Polyphone("yīng 应该 / yìng 响应", safe=(
+        "应该", "应当", "应有", "应允", "应许", "响应", "反应", "应用", "对应", "适应", "应付",
+        "应聘", "应变", "应验", "应答", "应急", "应邀", "报应", "供应", "顺应", "感应", "效应",
+        "应承", "应声", "应景", "应试", "应时")),
+    "结": Polyphone("jié 结果 / jiē 结实", safe=(
+        "结果", "结束", "总结", "结合", "结论", "结算", "结构", "结成", "结尾", "结余", "结婚",
+        "终结", "结案", "冻结", "结出", "结交", "结晶", "团结")),
+    "系": Polyphone("xì 系统 / jì 系鞋带", safe=(
+        "系统", "关系", "体系", "系列", "联系", "语系", "星系", "水系", "嫡系", "世系")),
+    "弹": Polyphone("tán 弹出 / dàn 子弹", safe=(
+        "弹出", "弹窗", "弹框", "弹回", "弹性", "弹指", "弹琴", "弹幕", "子弹", "炮弹", "弹药",
+        "导弹", "炸弹", "弹坑", "反弹", "弹劾", "弹跳", "弹簧", "评弹", "弹奏")),
+    "屏": Polyphone("píng 屏幕 / bǐng 屏息", safe=(
+        "屏幕", "显示屏", "大屏", "小屏", "截屏", "闪屏", "分屏", "全屏", "竖屏", "横屏", "屏风",
+        "屏障", "息屏", "亮屏", "开屏", "投屏", "一屏"), watch=("屏蔽", "屏息", "屏除", "屏退")),
 }
 
 INTERNAL_TERMS = (
@@ -76,6 +127,7 @@ class Validation:
     notes: list[str] = dataclasses.field(default_factory=list)
     episode: dict = dataclasses.field(default_factory=dict)
     sources: dict[str, Source] = dataclasses.field(default_factory=dict)
+    layout: str = DEFAULT_LAYOUT
 
     @property
     def ok(self) -> bool:
@@ -294,20 +346,58 @@ def check_redline(texts: list[str], report: Validation) -> None:
                 )
 
 
+def covers(text: str, pos: int, words: tuple) -> bool:
+    """True when the char at pos is part of one of `words` in the text."""
+    for word in words:
+        for index, char in enumerate(word):
+            start = pos - index
+            if char == text[pos] and start >= 0 and text[start:start + len(word)] == word:
+                return True
+    return False
+
+
+def polyphone_hit(text: str, pos: int, rule: Polyphone) -> bool:
+    if covers(text, pos, rule.safe):
+        return False
+    if covers(text, pos, rule.watch):
+        return True
+    if rule.watch_before and pos > 0 and text[pos - 1] in rule.watch_before:
+        return True
+    return not rule.watch
+
+
 def check_polyphones(texts: list[str], report: Validation) -> None:
     for index, text in enumerate(texts, 1):
-        for char, hint in POLYPHONES.items():
+        for char, rule in POLYPHONES.items():
             pos = 0
             while True:
                 pos = text.find(char, pos)
                 if pos < 0:
                     break
-                context = text[max(0, pos - 8):pos + 9]
-                report.warnings.append(
-                    f"narration {index}: polyphone '{char}' in …{context}… ({hint}); "
-                    "confirm the TTS reading or rewrite to the unambiguous word"
-                )
+                if polyphone_hit(text, pos, rule):
+                    context = text[max(0, pos - 8):pos + 9]
+                    report.warnings.append(
+                        f"narration {index}: polyphone '{char}' in …{context}… ({rule.hint}); "
+                        "confirm the TTS reading or rewrite to the unambiguous word"
+                    )
                 pos += 1
+
+
+def speech_units(text: str) -> float:
+    """CJK characters count 1; Latin letters and digits count LATIN_WEIGHT."""
+    return sum(1 if ord(char) > 0x2E7F else LATIN_WEIGHT
+               for char in text if char.isalnum())
+
+
+def check_length(texts: list[str], report: Validation) -> None:
+    for index, text in enumerate(texts, 1):
+        units = speech_units(text)
+        if units > NARRATION_SOFT_MAX:
+            report.warnings.append(
+                f"narration {index}: long ({units:.0f} speech units, about "
+                f"{units / SPEECH_UNITS_PER_SECOND:.0f}s); one segment carries one thought "
+                "-- split it or give the result its own segment"
+            )
 
 
 def valid_evidence(evidence: dict) -> bool:
@@ -332,9 +422,10 @@ def validate_episode(build: Path, episode: dict, report: Validation) -> Validati
         report.errors.append("voice must be a non-empty string")
     if not rate_ok:
         report.errors.append(f"rate must look like +5% or -10%, got {rate_value!r}")
-    if episode.get("layout", "banded") not in LAYOUTS:
+    report.layout = episode.get("layout", DEFAULT_LAYOUT)
+    if report.layout not in LAYOUTS:
         report.errors.append(
-            f"layout must be one of {sorted(LAYOUTS)}, got {episode.get('layout', 'banded')!r}"
+            f"layout must be one of {sorted(LAYOUTS)}, got {report.layout!r}"
         )
     evidence = episode.get("evidence")
     if evidence is not None and (not isinstance(evidence, dict) or not valid_evidence(evidence)):
@@ -425,6 +516,11 @@ def validate_episode(build: Path, episode: dict, report: Validation) -> Validati
             continue
         report.sources[segment_id] = Source(source, width, height, source_duration, evidence)
         check_evidence_size(segment_id, evidence, width, height, report)
+        if width < W or height < H:
+            report.warnings.append(
+                f"{segment_id}: source {width}x{height} is smaller than the {W}x{H} canvas "
+                f"and will be upscaled; record at {W}x{H} or larger"
+            )
         if end > source_duration + 0.1:
             report.errors.append(
                 f"{segment_id}: interval ends at {end:.2f}s beyond source duration "
@@ -448,6 +544,7 @@ def validate_episode(build: Path, episode: dict, report: Validation) -> Validati
     if texts:
         check_redline(texts, report)
         check_polyphones(texts, report)
+        check_length(texts, report)
     if uncached:
         report.warnings.append(
             f"{len(uncached)} segment(s) have no cached TTS; speed range not checked: "

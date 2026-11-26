@@ -20,7 +20,12 @@ PROFILE = "delivery-v1"
 SPEED_MIN, SPEED_MAX = 0.3, 3.0
 # Playback outside this band is legal but must be called out and disclosed in the note.
 SPEED_NOTICE = (0.7, 1.5)
+DEFAULT_LAYOUT = "fullbleed"
 LAYOUTS = ("banded", "fullbleed")
+# One narration segment should carry one thought; longer text only warns.
+NARRATION_SOFT_MAX = 50
+LATIN_WEIGHT = 0.3
+SPEECH_UNITS_PER_SECOND = 4.2
 MAX_LINE = 24
 MIN_EDGE_TTS = (7, 3, 1)
 INTENTS = {"delivery", "feedback"}

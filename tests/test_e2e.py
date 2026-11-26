@@ -54,8 +54,9 @@ def ffmpeg(*args: str) -> None:
     assert result.returncode == 0, result.stderr
 
 
-def make_take(path: Path, seconds: int = 12, pattern: str = "testsrc2") -> None:
-    ffmpeg("-f", "lavfi", "-i", f"{pattern}=s=1920x1080:r=30:d={seconds}",
+def make_take(path: Path, seconds: int = 12, pattern: str = "testsrc2",
+               size: str = "1920x1080") -> None:
+    ffmpeg("-f", "lavfi", "-i", f"{pattern}=s={size}:r=30:d={seconds}",
            "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p", str(path))
 
 
@@ -331,6 +332,34 @@ class OfflineRenderTests(unittest.TestCase):
         self.assertIn("FAIL:", output)
         self.assertIn("corrupt TTS clock", output)
         self.assertNotIn("Traceback", output)
+
+
+    def test_fullbleed_is_the_default_layout(self):
+        build = self.copy("screen_demo-default-layout")
+        episode = delivery_episode()
+        episode.pop("layout")
+        write_episode(build, episode)
+
+        code, output = run(str(SCRIPTS / "render.py"), "render", str(build))
+
+        self.assertEqual(code, 0, output)
+        from PIL import Image
+        frame = build / "frame.png"
+        ffmpeg("-ss", "1", "-i", str(build / "screen_demo.mp4"), "-frames:v", "1", str(frame))
+        image = Image.open(frame).convert("RGB")
+        for column in (8, image.width - 9):
+            pixel = image.getpixel((column, 540))
+            distance = sum(abs(a - b) for a, b in zip(pixel, (16, 24, 43)))
+            self.assertGreater(distance, 60, (column, pixel))
+
+    def test_a_take_smaller_than_the_canvas_is_called_out(self):
+        build = self.copy("screen_demo-small-take")
+        make_take(build / "take.mp4", size="1280x720")
+
+        code, output = run(str(SCRIPTS / "preflight.py"), str(build))
+
+        self.assertEqual(code, 0, output)
+        self.assertIn("1280x720 is smaller than the 1920x1080 canvas", output)
 
 
 if __name__ == "__main__":

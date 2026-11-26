@@ -219,7 +219,7 @@ def cmd_render(build: Path) -> int:
     episode = validation.episode
     segments = episode["segments"]
     feedback = episode.get("issue") if episode.get("intent") == "feedback" else None
-    layout = episode.get("layout", "banded")
+    layout = validation.layout
     voice, rate = episode["voice"], episode.get("rate", "+5%")
 
     planned = plan_segments(build, segments, validation.sources, voice, rate)

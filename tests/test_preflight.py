@@ -92,7 +92,7 @@ class PreflightBuildTests(unittest.TestCase):
         code, output = self.run_preflight(self.make_build("screen_demo"))
         self.assertEqual(code, 0, output)
         self.assertIn("PREFLIGHT=PASS", output)
-        self.assertNotIn("1920x1080", output)
+        self.assertNotIn("must be 1920x1080", output)
         self.assertNotIn("evidence size", output)
 
     def test_rejected_build_name_names_preflight_as_the_rejector(self):
