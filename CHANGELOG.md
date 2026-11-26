@@ -91,6 +91,24 @@ Behavior changes to know before upgrading:
 - Subtitle lines break at spoken-word boundaries: when the length cap falls inside a
   word, the word moves to the next line (checked against the live edge-tts service).
 
+### After a second audit pass
+
+- Playback speed had been inverted since the first release: a segment reported as
+  fast-forwarded played its first moments in slow motion, and a slowed segment sped up
+  and then froze on its last frame. Output timestamps now divide by the speed, so a
+  1.5x segment really shows 1.5 source seconds per output second. The padding that
+  replaces the open-ended clone is 0.2s, for frame-count rounding and a sparse last
+  frame only.
+- Take placement is judged by where the file really lives: case variants such as
+  `CLIPS/x.mp4` and symlinks into an output folder are rejected, two segment ids that
+  differ only by case are duplicates, and the renderer checks every file it is about
+  to write against the takes before rendering anything.
+- A failed or interrupted render leaves no staging artifact and no `.tmp` file behind;
+  the next render clears any it finds.
+- `verify_delivery.py` rejects a report whose loudness was never measured.
+- A short Latin word at the end of a full subtitle line moves to the next line instead
+  of being cut in half.
+
 ### Fixes
 
 - Subtitles and chips use the Simplified-Chinese font face. Face 0 of the macOS collections
@@ -101,7 +119,7 @@ Behavior changes to know before upgrading:
 - `package.json` `files` lists the whole `scripts/` directory.
 - `render.py` is split into `dv_core`, `dv_episode`, `dv_tts`, `dv_gate`, `dv_draw`,
   `dv_notes` and `dv_review` behind the three entry points. Tests grew from 31 to 106,
-  including an offline end-to-end render; 130 after the audit round.
+  including an offline end-to-end render; 138 after the two audit rounds.
 
 ## 1.2.5
 

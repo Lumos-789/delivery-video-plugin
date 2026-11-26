@@ -13,13 +13,13 @@
 | `evidence` | no | version facts carried into `delivery.generated.md` and bound with the episode: an object whose values are strings, numbers or lists of them, e.g. `{"git_sha": "…", "environment": "staging", "tickets": ["T-1001"]}` |
 | `intent` | no | `delivery` (default) or `feedback`; feedback requires the `issue` block |
 | `issue` | for feedback | defect report metadata, see below |
-| `segments` | yes | non-empty array with unique `id`s; every segment is a shot (default) or a card |
+| `segments` | yes | non-empty array with unique `id`s (two ids that differ only by case are duplicates); every segment is a shot (default) or a card |
 | `segments[].id` | yes | ASCII id used as a file stem: letters, digits, `_`, `-`, starting with a letter or digit |
 | `segments[].kind` | no | `shot` (default) or `card` |
 | `segments[].case` | no | acceptance-case chip shown top-left, e.g. `D-02`; recommended when the video covers 2+ cases |
 | `segments[].phase` | for feedback | `context`, `repro`, `actual`, `expected` or `impact`; becomes the second chip |
 | `segments[].label` | shots | short top-left label; optional on cards |
-| `segments[].shot` | shots | recording file relative to the build directory; it must stay inside it and out of the renderer's own files (`screen_demo.mp4`, `tts/`, `review/`, `clips/`, `quality_gate/`) |
+| `segments[].shot` | shots | recording file relative to the build directory. It must stay inside it and out of the renderer's own files (`screen_demo.mp4`, `tts/`, `review/`, `clips/`, `quality_gate/`); this is judged by where the file really lives, so `CLIPS/x.mp4` and a symlink into `clips/` count as `clips/` |
 | `segments[].start` | shots | range start in the source, seconds |
 | `segments[].end` | shots | range end; must exceed `start` and not run past the take |
 | `segments[].source` | shots | `browser` requires `<shot-stem>.evidence.json`; `demo-stage` requires headless-stage evidence; window recordings may say `window` or omit |
@@ -224,6 +224,7 @@ Awaiting user review — not uploaded / not published.
 | `recording speed outside 0.3x..3x` | shorten narration, widen the range or split the segment; every such segment is listed before anything renders |
 | `recording ends after N of M frames` | the take is truncated — its header promises more than the file holds; re-record it or end the segment earlier |
 | `shot … is a file the renderer writes` | the take sits where the renderer writes; move it out of `tts/`, `review/`, `clips/`, `quality_gate/` or away from `screen_demo.mp4` |
+| `refusing to render: these outputs would overwrite a take` | the renderer's own last check found a take under a file it is about to write; move the take |
 | `L102` | the loudness measurement itself failed; the message carries the ffmpeg error |
 | `… below the 0.8 pass floor` | the review scored a dimension under 0.8 and still said pass; fix the material or list it under `critical` |
 | `narration synthesis failed for <id>` | the TTS service or the network failed; finished segments stay cached, so rerun |

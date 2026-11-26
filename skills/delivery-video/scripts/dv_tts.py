@@ -182,6 +182,15 @@ def line_weight(line: list) -> float:
     return sum(LATIN_WIDTH if char["char"].isascii() else 1.0 for char in line)
 
 
+def word_cut(line: list) -> int:
+    """Where to cut a line that grew too long: before the word being spoken, unless
+    that word is the whole line."""
+    word_starts = [position for position, item in enumerate(line) if item.get("word")]
+    if word_starts and word_starts[-1] > 0:
+        return word_starts[-1]
+    return len(line)
+
+
 def group_lines(chars: list[dict], max_line: int = MAX_LINE) -> list[list[dict]]:
     """Split word-clock chars into subtitle lines. No spoken word is cut in half:
     a line ends after sentence punctuation, at soft punctuation once it is long,
@@ -194,19 +203,15 @@ def group_lines(chars: list[dict], max_line: int = MAX_LINE) -> list[list[dict]]
         if char["char"].isascii() and char["char"].isalnum() \
                 and nxt.isascii() and nxt.isalnum():
             if line_weight(current) >= max_line + 2:
-                lines.append(current)
-                current = []
+                cut = word_cut(current)
+                lines.append(current[:cut])
+                current = current[cut:]
             continue
         sentence_end = char["char"] in BREAK_AFTER
         soft = char["char"] in SOFT_BREAK
         if sentence_end or len(current) >= max_line + 2 \
                 or (len(current) >= max_line and soft):
-            cut = len(current)
-            if not sentence_end and not soft:
-                word_starts = [position for position, item in enumerate(current)
-                               if item.get("word")]
-                if word_starts and word_starts[-1] > 0:
-                    cut = word_starts[-1]
+            cut = len(current) if sentence_end or soft else word_cut(current)
             lines.append(current[:cut])
             current = current[cut:]
     if current:

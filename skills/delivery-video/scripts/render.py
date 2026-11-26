@@ -36,6 +36,7 @@ from dv_core import (
     FPS,
     H,
     LEAD,
+    OUTPUT_DIRS,
     PAD_TOLERANCE,
     PHASE_LABELS,
     SEVERITIES,
@@ -47,6 +48,7 @@ from dv_core import (
     crop_error,
     duration,
     run,
+    same_file_key,
     sha256,
     write_text_atomic,
 )
@@ -61,7 +63,7 @@ from dv_notes import (
     write_report,
 )
 from dv_review import build_review
-from dv_tts import Narration, group_lines, synth
+from dv_tts import Narration, cache_files, group_lines, synth
 
 STAGING_ARTIFACT = "screen_demo.rendering.mp4"
 
@@ -83,10 +85,12 @@ def segment_filter(crop: list[int] | None, layout: str, speed: float,
         box, pad = f"scale={W}:{H}", f"pad={W}:{H}:(ow-iw)/2:(oh-ih)/2"
     else:
         box, pad = "scale=1800:866", f"pad={W}:{H}:(ow-iw)/2:66"
+    # speed > 1 fast-forwards: output timestamps are the source ones divided by speed
     parts.append(
-        f"setpts={speed}*(PTS-STARTPTS),{box}:force_original_aspect_ratio=decrease"
+        f"setpts=(PTS-STARTPTS)/{speed:.6f},{box}:force_original_aspect_ratio=decrease"
         f":flags=lanczos,eq=brightness=-0.035,{pad}:color=0x10182b")
-    # tpad only covers frame-count rounding; a take that ends early still falls short here
+    # tpad only covers frame-count rounding and a sparse last frame; a take that ends
+    # early still falls short here
     parts.append(f"fps={FPS},tpad=stop_mode=clone:stop_duration={PAD_TOLERANCE}")
     return ",".join(parts)
 
@@ -236,8 +240,9 @@ def shot_frames(item: Planned, build: Path, feedback: dict | None, layout: str,
             if len(content) != W * H * 3:
                 raise RenderError(
                     f"{segment['id']}: recording ends after {frame_index} of {frame_count} "
-                    "frames; the take is shorter than its header says (truncated recording?) "
-                    "-- re-record the take or end the segment earlier")
+                    "frames; the take delivers less than its header promises (truncated "
+                    f"recording, or a last frame gap over {PAD_TOLERANCE:g}s) -- re-record "
+                    "the take or end the segment earlier")
             frame = Image.frombytes("RGB", (W, H), content)
             draw = ImageDraw.Draw(frame)
             header(draw, fonts, severity, case, segment["label"])
@@ -367,13 +372,50 @@ def assemble(build: Path, clips: list, offset: float) -> Path:
          "-map", "0:v", "-map", "1:a", "-c:v", "copy", "-c:a", "aac",
          "-ar", "44100", "-ac", "2", "-t", str(offset), str(assembled)])
     staging = build / STAGING_ARTIFACT
-    loudnorm_finalize(assembled, staging)
-    measured = duration(staging)
+    try:
+        loudnorm_finalize(assembled, staging)
+        measured = duration(staging)
+    except BaseException:
+        staging.unlink(missing_ok=True)
+        raise
     if abs(measured - offset) > 0.15:
         staging.unlink()
         raise RenderError(f"final duration {measured:.3f}s != expected {offset:.3f}s")
     os.replace(staging, build / "screen_demo.mp4")
     return build / "screen_demo.mp4"
+
+
+def clear_stale(build: Path) -> None:
+    """Drop a half-written artifact and stray temp files left by an interrupted run."""
+    stale = [build / STAGING_ARTIFACT]
+    for folder in (build, *(build / name for name in OUTPUT_DIRS)):
+        stale += folder.glob("*.tmp")
+    for path in stale:
+        path.unlink(missing_ok=True)
+
+
+def guard_outputs(build: Path, segments: list, sources: dict, voice: str, rate: str) -> None:
+    """Last line of defence for takes: nothing the renderer is about to write may be a
+    take, however the take's path is spelled (case, symlinks)."""
+    takes = {same_file_key(source.path) for source in sources.values()}
+    outputs = [build / name for name in (
+        "screen_demo.mp4", STAGING_ARTIFACT, "timeline.json", "cover.png",
+        "delivery.generated.md", "feedback.json", "feedback.generated.md")]
+    outputs += [build / "quality_gate" / "report.json", build / "review" / "critic.draft.json"]
+    outputs += [build / CLIPS_DIR / name for name in (
+        "_video.txt", "_audio.txt", "_picture.mp4", "_voice.wav", "_assembled.mp4")]
+    for segment in segments:
+        segment_id = segment["id"]
+        outputs += [build / CLIPS_DIR / f"{segment_id}.mp4",
+                    build / CLIPS_DIR / f"{segment_id}.wav"]
+        outputs += [build / "review" / "frames" / f"{segment_id}-{mark}.png"
+                    for mark in ("start", "mid", "end")]
+        if segment.get("text"):
+            outputs += list(cache_files(build, segment_id, segment["text"], voice, rate))
+    hits = sorted(str(path) for path in outputs if same_file_key(path) in takes)
+    if hits:
+        raise RenderError("refusing to render: these outputs would overwrite a take: "
+                          + ", ".join(hits))
 
 
 def cmd_render(build: Path) -> int:
@@ -392,6 +434,8 @@ def cmd_render(build: Path) -> int:
     layout = validation.layout
     voice, rate = episode["voice"], episode.get("rate", "+5%")
 
+    clear_stale(build)
+    guard_outputs(build, segments, validation.sources, voice, rate)
     planned = plan_segments(build, segments, validation.sources, voice, rate)
     tracks, timeline, retimed, offset = [], [], [], 0.0
     for item in planned:

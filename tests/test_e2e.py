@@ -17,6 +17,7 @@ SCRIPTS = ROOT / "skills" / "delivery-video" / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import dv_core  # noqa: E402
+import dv_episode  # noqa: E402
 import dv_tts  # noqa: E402
 import fake_tts  # noqa: E402
 import render  # noqa: E402
@@ -59,6 +60,39 @@ def make_take(path: Path, seconds: int = 12, pattern: str = "testsrc2",
     ffmpeg("-f", "lavfi", "-i", f"{pattern}=s={size}:r=30:d={seconds}",
            "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
            *(["-movflags", "+faststart"] if faststart else []), str(path))
+
+
+TIME_COLORS = {"red": (255, 0, 0), "green": (0, 255, 0), "blue": (0, 0, 255),
+               "yellow": (255, 255, 0), "magenta": (255, 0, 255), "cyan": (0, 255, 255)}
+
+
+def make_time_coded_take(path: Path) -> None:
+    """Six one-second color blocks plus two moving bars (so the gate sees motion): the
+    color at the frame center tells which source second is on screen."""
+    args = []
+    for red, green, blue in TIME_COLORS.values():
+        args += ["-f", "lavfi", "-i",
+                 f"color=c=0x{red:02X}{green:02X}{blue:02X}:s=1920x1080:r=30:d=1"]
+    chain = "".join(f"[{index}:v]" for index in range(len(TIME_COLORS)))
+    ffmpeg(*args, "-filter_complex",
+           f"{chain}concat=n={len(TIME_COLORS)}:v=1:a=0,"
+           "drawbox=x='mod(100+t*280,1400)':y=120:w=500:h=300:color=0x808080:t=fill,"
+           "drawbox=x='1300-mod(100+t*280,1400)':y=720:w=500:h=300:color=0x808080:t=fill,"
+           "noise=alls=8:allf=t",
+           "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
+           str(path))
+
+
+def center_color(build: Path, when: float) -> str:
+    """Which color block sits at the center of the frame at `when` seconds."""
+    from PIL import Image
+    frame = build / f"probe-{when:.3f}.png"
+    ffmpeg("-ss", f"{when:.3f}", "-i", str(build / "screen_demo.mp4"),
+           "-frames:v", "1", str(frame))
+    pixel = Image.open(frame).convert("RGB").getpixel((960, 540))
+    frame.unlink()
+    return min(TIME_COLORS, key=lambda name: sum((a - b) ** 2
+                                                 for a, b in zip(pixel, TIME_COLORS[name])))
 
 
 def seed_narration(build: Path, segment: dict, seconds: float = 2.0) -> None:
@@ -413,7 +447,9 @@ class OfflineRenderTests(unittest.TestCase):
         write_episode(build, episode)
         for stale in (build / "tts").glob("02-readback.*"):
             stale.unlink()
-        for rendered in build.glob("01-open.*"):
+        for stale in (build / "tts").glob("02-readback.*"):
+            stale.unlink()
+        for rendered in (build / "clips").glob("01-open.*"):
             rendered.unlink()
         calls = fake_tts.fake_edge_tts(self)
         out = io.StringIO()
@@ -427,7 +463,7 @@ class OfflineRenderTests(unittest.TestCase):
         self.assertIn("speed", message)
         self.assertEqual(len(calls), 1)
         self.assertNotIn("RENDERED", out.getvalue())
-        self.assertFalse((build / "01-open.mp4").exists())
+        self.assertFalse((build / "clips" / "01-open.mp4").exists())
 
     def test_preflight_reports_legacy_cache_files_once(self):
         build = self.copy("screen_demo-legacy")
@@ -714,5 +750,80 @@ class OfflineRenderTests(unittest.TestCase):
 
         self.assertEqual(code, 1, output)
         self.assertIn("corrupt TTS clock", output)
+    def test_playback_speed_moves_the_footage_in_the_right_direction(self):
+        build = self.copy("screen_demo-speed-direction")
+        make_time_coded_take(build / "take.mp4")
+        episode = delivery_episode()
+        fast, slow = episode["segments"]
+        fast["start"], fast["end"] = 0.0, 4.0
+        slow["start"], slow["end"] = 0.0, 2.0
+        for stale in (build / "tts").glob("02-readback.*"):
+            stale.unlink()
+        seed_narration(build, slow, seconds=4)
+        write_episode(build, episode)
+
+        code, output = run(str(SCRIPTS / "render.py"), "render", str(build))
+
+        self.assertEqual(code, 0, output)
+        fast, slow = self.timeline(build)
+        self.assertGreater(fast["speed"], 1.4)
+        self.assertLess(slow["speed"], 0.5)
+        self.assertEqual(center_color(build, 1.0), "green")
+        self.assertEqual(center_color(build, fast["end"] - 0.2), "yellow")
+        self.assertEqual(center_color(build, slow["start"] + 1.0), "red")
+        self.assertEqual(center_color(build, slow["end"] - 0.2), "green")
+
+    def test_verify_rejects_a_report_whose_loudness_was_never_measured(self):
+        build = self.copy("screen_demo-no-loudness")
+        self.complete_review(build)
+        self.edit_json(build / "quality_gate" / "report.json",
+                       lambda report: report["checks"].__setitem__("loudness_lufs", None))
+
+        code, output = self.verify(build)
+
+        self.assertEqual(code, 1, output)
+        self.assertIn("loudness", output)
+
+    def test_no_staging_or_temp_files_survive_a_failed_or_successful_render(self):
+        build = self.copy("screen_demo-leftovers")
+        stray = [build / "screen_demo.rendering.mp4", build / "tts" / "stray.tmp"]
+        for path in stray:
+            path.write_bytes(b"stale")
+
+        def explode(raw, final):
+            final.write_bytes(b"half written")
+            raise render.RenderError("loudness measurement failed:\nsimulated")
+        original = render.loudnorm_finalize
+        render.loudnorm_finalize = explode
+        try:
+            with redirect_stdout(io.StringIO()):
+                with self.assertRaises(render.RenderError):
+                    render.cmd_render(build)
+        finally:
+            render.loudnorm_finalize = original
+        self.assertEqual([path.name for path in build.rglob("*.tmp")], [])
+        self.assertFalse((build / "screen_demo.rendering.mp4").exists())
+
+        code, output = run(str(SCRIPTS / "render.py"), "render", str(build))
+        self.assertEqual(code, 0, output)
+        self.assertEqual([path.name for path in build.rglob("*.tmp")], [])
+        self.assertFalse((build / "screen_demo.rendering.mp4").exists())
+    def test_the_renderer_refuses_to_write_over_a_take_even_if_preflight_missed_it(self):
+        build = self.copy("screen_demo-guard")
+        (build / "clips" / "01-open.mp4").write_bytes(b"x")
+        episode = delivery_episode()
+
+        def source(path: Path) -> dv_episode.Source:
+            return dv_episode.Source(path=path, width=1920, height=1080, duration=12.0,
+                                     evidence=None)
+
+        safe = {segment["id"]: source(build / "take.mp4") for segment in episode["segments"]}
+        render.guard_outputs(build, episode["segments"], safe, VOICE, "+5%")
+        sitting_on_clip = dict(safe, **{"01-open": source(build / "clips" / "01-open.mp4")})
+        with self.assertRaisesRegex(render.RenderError, "refusing to render.*clips/01-open.mp4"):
+            render.guard_outputs(build, episode["segments"], sitting_on_clip, VOICE, "+5%")
+        other_case = dict(safe, **{"02-readback": source(build / "CLIPS" / "02-readback.mp4")})
+        with self.assertRaisesRegex(render.RenderError, "refusing to render"):
+            render.guard_outputs(build, episode["segments"], other_case, VOICE, "+5%")
 if __name__ == "__main__":
     unittest.main()

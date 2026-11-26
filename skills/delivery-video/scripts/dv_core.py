@@ -11,6 +11,7 @@ import os
 import re
 import shutil
 import subprocess
+import unicodedata
 from pathlib import Path
 
 W, H, FPS = 1920, 1080, 30
@@ -77,9 +78,9 @@ OUTPUT_FILES = (
     "screen_demo.mp4", "screen_demo.rendering.mp4", "timeline.json", "cover.png",
     "delivery.generated.md", "feedback.json", "feedback.generated.md", "visual-critic.json",
 )
-# A take may deliver this much less than its header promises before the render
-# refuses it; beyond it the last frame would silently freeze.
-PAD_TOLERANCE = 0.5
+# Frame-count rounding and sparse last frames may fall this short before the
+# render refuses the take; beyond it the tail would silently freeze.
+PAD_TOLERANCE = 0.2
 
 FONT_CANDIDATES = [
     # macOS. PingFang first; find_font picks its Simplified face by name.
@@ -195,9 +196,22 @@ def content_sha256(payload: object) -> str:
 
 
 def is_renderer_output(relative: Path) -> bool:
-    """True for a path (relative to the build) that the renderer writes itself."""
+    """True for a path (relative to the build) that the renderer writes itself.
+
+    Compared case-insensitively: on a case-insensitive disk `CLIPS/x.mp4` and
+    `clips/x.mp4` are the same file, so the stricter reading is the safe one.
+    """
     parts = relative.parts
-    return bool(parts) and (relative.as_posix() in OUTPUT_FILES or parts[0] in OUTPUT_DIRS)
+    if not parts:
+        return False
+    files = {name.casefold() for name in OUTPUT_FILES}
+    dirs = {name.casefold() for name in OUTPUT_DIRS}
+    return relative.as_posix().casefold() in files or parts[0].casefold() in dirs
+
+
+def same_file_key(path: Path) -> str:
+    """Key equal for two spellings of one file on a case-insensitive disk."""
+    return unicodedata.normalize("NFC", str(Path(path).resolve())).casefold()
 
 
 def write_text_atomic(path: Path, text: str) -> None:

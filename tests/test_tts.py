@@ -232,5 +232,15 @@ class SynthTests(unittest.TestCase):
         self.assertEqual([len(line) for line in lines], [26, 14])
 
 
+    def test_a_short_latin_word_is_not_cut_when_the_line_is_already_full(self):
+        text = "标" * 24 + "Hello世界"
+        words = [{"char": "标" * 24, "start_ms": 0, "end_ms": 4800},
+                 {"char": "Hello", "start_ms": 4900, "end_ms": 5600},
+                 {"char": "世界", "start_ms": 5700, "end_ms": 6400}]
+
+        chars = dv_tts.align_clock(text, words)
+        lines = ["".join(char["char"] for char in line) for line in dv_tts.group_lines(chars)]
+
+        self.assertEqual(lines, ["标" * 24, "Hello世界"])
 if __name__ == "__main__":
     unittest.main()

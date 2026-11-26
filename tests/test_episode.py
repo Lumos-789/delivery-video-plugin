@@ -1,3 +1,4 @@
+import os
 import sys
 import unittest
 from pathlib import Path
@@ -210,5 +211,36 @@ class FieldTypeTests(unittest.TestCase):
         self.assertTrue(any("phase must be" in error for error in errors), errors)
         errors = errors_for(Path("."), {"voice": "v", "intent": [], "segments": [{"id": "a1"}]})
         self.assertTrue(any("intent must be" in error for error in errors), errors)
+class TakeSpellingTests(unittest.TestCase):
+    def setUp(self):
+        import tempfile
+        self._tmp = tempfile.TemporaryDirectory(prefix="dv-spelling-")
+        self.build = Path(self._tmp.name).resolve() / "screen_demo-spelling"
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_ids_differing_only_by_case_are_duplicates(self):
+        errors = errors_for(Path("."), {"voice": "v", "segments": [{"id": "01-Open"}, {"id": "01-open"}]})
+        self.assertEqual(sum("duplicate id" in error for error in errors), 1, errors)
+
+    def test_a_take_is_judged_by_where_it_really_lives(self):
+        (self.build / "clips").mkdir(parents=True)
+        take = self.build / "clips" / "x.mp4"
+        take.write_bytes(b"x")
+        os.symlink("clips", self.build / "footage")
+        for shot in ("CLIPS/x.mp4", "footage/x.mp4"):
+            with self.subTest(shot=shot):
+                errors = errors_for(self.build, {"voice": "v", "segments": [
+                    {"id": "s1", "label": "l", "text": "旁白", "shot": shot, "start": 0, "end": 1}]})
+                self.assertTrue(any("is a file the renderer writes" in error
+                                    for error in errors), errors)
+
+    def test_a_take_next_to_the_output_dirs_is_left_alone(self):
+        (self.build / "takes").mkdir(parents=True)
+        (self.build / "takes" / "x.mp4").write_bytes(b"x")
+        errors = errors_for(self.build, {"voice": "v", "segments": [
+            {"id": "s1", "label": "l", "text": "旁白", "shot": "takes/x.mp4", "start": 0, "end": 1}]})
+        self.assertFalse(any("renderer writes" in error for error in errors), errors)
 if __name__ == "__main__":
     unittest.main()

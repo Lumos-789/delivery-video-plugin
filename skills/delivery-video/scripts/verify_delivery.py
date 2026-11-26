@@ -450,6 +450,11 @@ def main() -> int:
                 f"quality report profile is {gate.get('profile')!r}; "
                 "rerun the gate: render.py gate --video <mp4> --work <dir>"
             )
+        if (gate.get("checks") or {}).get("loudness_lufs", 0) is None:
+            errors.append(
+                "loudness was never measured for this artifact (loudness_lufs is null); "
+                "re-render: an unmeasurable artifact now fails the gate as L102"
+            )
         warnings.extend(
             f"quality warning {item.get('code')}: {item.get('message')}"
             for item in (gate.get("warnings") or [])

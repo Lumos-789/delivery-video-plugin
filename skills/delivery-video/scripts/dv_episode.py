@@ -469,6 +469,7 @@ def card_errors(segment: dict, narrated: bool) -> list[str]:
 
 
 def validate_episode(build: Path, episode: dict, report: Validation) -> Validation:
+    build = build.expanduser().resolve()
     voice_value = episode.get("voice")
     rate_value = episode.get("rate", "+5%")
     voice_ok = isinstance(voice_value, str) and bool(voice_value.strip())
@@ -507,10 +508,11 @@ def validate_episode(build: Path, episode: dict, report: Validation) -> Validati
                 f"segments[{index}]: id must be ASCII letters/digits/_/- and start alphanumeric"
             )
             continue
-        if segment_id in seen_ids:
+        folded = segment_id.casefold()
+        if folded in seen_ids:
             report.errors.append(f"{segment_id}: duplicate id")
             continue
-        seen_ids.add(segment_id)
+        seen_ids.add(folded)
 
         kind = segment.get("kind", "shot")
         if kind not in SEGMENT_KINDS:
@@ -545,12 +547,6 @@ def validate_episode(build: Path, episode: dict, report: Validation) -> Validati
         if shot_path.is_absolute() or ".." in shot_path.parts:
             report.errors.append(f"{segment_id}: shot must stay inside the build directory")
             continue
-        if is_renderer_output(shot_path):
-            report.errors.append(
-                f"{segment_id}: shot {shot} is a file the renderer writes into this build; "
-                f"keep takes out of {', '.join(OUTPUT_DIRS)}/ and away from the output file names"
-            )
-            continue
         source_kind = segment.get("source")
         if source_kind is not None and not (isinstance(source_kind, str)
                                             and source_kind in ALLOWED_SOURCES):
@@ -560,9 +556,15 @@ def validate_episode(build: Path, episode: dict, report: Validation) -> Validati
             continue
         source = (build / shot_path).resolve()
         try:
-            source.relative_to(build)
+            relative = source.relative_to(build)
         except ValueError:
             report.errors.append(f"{segment_id}: shot resolves outside the build directory")
+            continue
+        if is_renderer_output(relative):
+            report.errors.append(
+                f"{segment_id}: shot {shot} is a file the renderer writes into this build; "
+                f"keep takes out of {', '.join(OUTPUT_DIRS)}/ and away from the output file names"
+            )
             continue
         if not source.is_file() or source.stat().st_size == 0:
             report.errors.append(f"{segment_id}: missing or empty recording {source}")
