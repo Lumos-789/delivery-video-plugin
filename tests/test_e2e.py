@@ -12,6 +12,9 @@ sys.dont_write_bytecode = True
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / "skills" / "delivery-video" / "scripts"
+sys.path.insert(0, str(SCRIPTS))
+import dv_core  # noqa: E402
+
 FFMPEG = shutil.which("ffmpeg")
 FFPROBE = shutil.which("ffprobe")
 VOICE = "zh-CN-YunxiNeural"
@@ -159,6 +162,119 @@ class OfflineRenderTests(unittest.TestCase):
         self.assertEqual(code, 1, output)
         self.assertIn("FAIL:", output)
         self.assertNotIn("Traceback", output)
+
+    def edit_json(self, path: Path, change) -> None:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        change(data)
+        path.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
+
+    def report(self, build: Path) -> dict:
+        return json.loads((build / "quality_gate" / "report.json").read_text(encoding="utf-8"))
+
+    def timeline(self, build: Path) -> list:
+        return json.loads((build / "timeline.json").read_text(encoding="utf-8"))
+
+    def test_timeline_records_playback_speed_and_the_take_fingerprint(self):
+        for item in self.timeline(self.build):
+            self.assertEqual(item["kind"], "shot")
+            self.assertAlmostEqual(item["speed"], 1.0, delta=0.05)
+            self.assertEqual(item["source_sha256"], sha256(self.build / "take.mp4"))
+
+    def test_gate_report_binds_the_episode_and_the_timeline(self):
+        report = self.report(self.build)
+        self.assertEqual(report["episode"],
+                         {"file": "episode.json", "sha256": dv_core.content_sha256(self.episode)})
+        self.assertEqual(report["timeline"]["sha256"], sha256(self.build / "timeline.json"))
+
+    def test_delivery_note_lists_every_segment_and_is_bound(self):
+        note = self.build / "delivery.generated.md"
+        text = note.read_text(encoding="utf-8")
+        self.assertIn("`take.mp4`", text)
+        self.assertIn("1.00x", text)
+        self.assertIn("00:00.000-00:02.", text)
+        self.assertIn(self.report(self.build)["video_sha256"], text)
+        self.assertEqual(self.report(self.build)["delivery"],
+                         {"file": "delivery.generated.md", "sha256": sha256(note)})
+
+    def test_delivery_note_carries_the_version_evidence_block(self):
+        build = self.copy("screen_demo-evidence")
+        episode = delivery_episode()
+        episode["evidence"] = {"git_sha": "abc1234", "environment": "staging"}
+        write_episode(build, episode)
+        code, output = run(str(SCRIPTS / "render.py"), "render", str(build))
+        self.assertEqual(code, 0, output)
+        text = (build / "delivery.generated.md").read_text(encoding="utf-8")
+        self.assertIn("git_sha: abc1234", text)
+        self.assertIn("environment: staging", text)
+
+    def test_verify_fails_when_the_narration_was_edited_after_rendering(self):
+        build = self.copy("screen_demo-stale-text")
+        self.edit_json(build / "episode.json",
+                       lambda episode: episode["segments"][1].__setitem__("text", "改掉后的旁白"))
+
+        code, output = run(str(SCRIPTS / "verify_delivery.py"), str(build))
+
+        self.assertEqual(code, 1, output)
+        self.assertIn("episode.json was edited after rendering", output)
+
+    def test_verify_fails_when_a_take_was_replaced_after_rendering(self):
+        build = self.copy("screen_demo-swapped-take")
+        make_take(build / "take.mp4", seconds=6, pattern="smptebars")
+
+        code, output = run(str(SCRIPTS / "verify_delivery.py"), str(build))
+
+        self.assertEqual(code, 1, output)
+        self.assertIn("take.mp4: take changed after rendering", output)
+
+    def test_verify_fails_when_the_timeline_was_edited_after_rendering(self):
+        build = self.copy("screen_demo-stale-timeline")
+        self.edit_json(build / "timeline.json",
+                       lambda timeline: timeline[0].__setitem__("speed", 1.0) or
+                       timeline[0].__setitem__("source_start", 9.0))
+
+        code, output = run(str(SCRIPTS / "verify_delivery.py"), str(build))
+
+        self.assertEqual(code, 1, output)
+        self.assertIn("timeline.json was edited after rendering", output)
+
+    def test_verify_fails_when_the_delivery_note_was_edited_after_rendering(self):
+        build = self.copy("screen_demo-edited-note")
+        note = build / "delivery.generated.md"
+        note.write_text(note.read_text(encoding="utf-8") + "\nEDITED\n", encoding="utf-8")
+
+        code, output = run(str(SCRIPTS / "verify_delivery.py"), str(build))
+
+        self.assertEqual(code, 1, output)
+        self.assertIn("delivery.generated.md was edited after rendering", output)
+
+    def test_verify_fails_when_the_report_has_no_episode_binding(self):
+        build = self.copy("screen_demo-unbound")
+
+        def unbind(report_path: Path):
+            def change(report: dict) -> None:
+                report.pop("episode")
+            self.edit_json(report_path, change)
+        unbind(build / "quality_gate" / "report.json")
+
+        code, output = run(str(SCRIPTS / "verify_delivery.py"), str(build))
+
+        self.assertEqual(code, 1, output)
+        self.assertIn("no episode binding", output)
+
+    def test_render_calls_out_clearly_retimed_segments(self):
+        build = self.copy("screen_demo-retimed")
+        episode = delivery_episode()
+        episode["segments"][0]["end"] = 6.6
+        write_episode(build, episode)
+
+        code, output = run(str(SCRIPTS / "render.py"), "render", str(build))
+
+        self.assertEqual(code, 0, output)
+        self.assertIn("WARN 01-open: playback", output)
+        self.assertIn("fast-forwarded", output)
+        speed = self.timeline(build)[0]["speed"]
+        self.assertTrue(2.0 < speed < 2.6, speed)
+        self.assertIn(f"{speed:.2f}x", (build / "delivery.generated.md").read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

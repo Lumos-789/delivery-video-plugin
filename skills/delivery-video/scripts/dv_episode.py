@@ -312,6 +312,19 @@ def check_polyphones(texts: list[str], report: Validation) -> None:
                 pos += 1
 
 
+def valid_evidence(evidence: dict) -> bool:
+    scalar = (str, int, float)
+    for key, value in evidence.items():
+        if not isinstance(key, str) or not key.strip():
+            return False
+        if isinstance(value, list):
+            if not all(isinstance(item, scalar) for item in value):
+                return False
+        elif not isinstance(value, scalar):
+            return False
+    return True
+
+
 def validate_episode(build: Path, episode: dict, report: Validation) -> Validation:
     voice_value = episode.get("voice")
     rate_value = episode.get("rate", "+5%")
@@ -324,6 +337,12 @@ def validate_episode(build: Path, episode: dict, report: Validation) -> Validati
     if episode.get("layout", "banded") not in LAYOUTS:
         report.errors.append(
             f"layout must be one of {sorted(LAYOUTS)}, got {episode.get('layout', 'banded')!r}"
+        )
+    evidence = episode.get("evidence")
+    if evidence is not None and (not isinstance(evidence, dict) or not valid_evidence(evidence)):
+        report.errors.append(
+            "evidence must be an object of version facts (git_sha, environment, ticket ids) "
+            "with string, number or list values"
         )
 
     segments = episode.get("segments")

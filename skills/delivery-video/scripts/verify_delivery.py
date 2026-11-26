@@ -229,6 +229,73 @@ def check_feedback_report(build: Path, digest: str, gate: dict) -> list[str]:
     return errors
 
 
+def bound_path(build: Path, name: object, fallback: str, errors: list[str], label: str):
+    if not isinstance(name, str) or not name:
+        name = fallback
+    path = (build / name).resolve()
+    try:
+        path.relative_to(build)
+    except ValueError:
+        errors.append(f"{label} path resolves outside the build directory: {name}")
+        return None
+    return path
+
+
+def check_bindings(build: Path, episode: object, gate: dict, errors: list[str]) -> None:
+    """The script, timeline, takes and generated note must still be what was rendered."""
+    binding = gate.get("episode")
+    if not isinstance(binding, dict) or not binding.get("sha256"):
+        errors.append(
+            "quality report has no episode binding (rendered or re-gated before this "
+            "check existed, or by the attachment gate); re-render with render.py"
+        )
+    elif isinstance(episode, dict) and binding["sha256"] != content_sha256(episode):
+        errors.append("episode.json was edited after rendering (sha256 mismatch); re-render")
+
+    timeline = None
+    binding = gate.get("timeline")
+    if not isinstance(binding, dict) or not binding.get("sha256"):
+        errors.append("quality report has no timeline binding; re-render with render.py")
+    else:
+        path = bound_path(build, binding.get("file"), "timeline.json", errors, "timeline")
+        if path is not None:
+            if not path.is_file():
+                errors.append(f"{path.name}: timeline is missing")
+            elif sha256(path) != binding["sha256"]:
+                errors.append(f"{path.name} was edited after rendering (sha256 mismatch); re-render")
+            else:
+                try:
+                    timeline = load_json(path)
+                except RenderError as exc:
+                    errors.append(str(exc))
+    if isinstance(timeline, list):
+        for item in timeline:
+            if not isinstance(item, dict) or not item.get("source_sha256"):
+                continue
+            name = item.get("source")
+            if not isinstance(name, str) or not name:
+                errors.append(f"{item.get('id')}: timeline entry names no source take")
+                continue
+            path = bound_path(build, name, "", errors, "take")
+            if path is None:
+                continue
+            if not path.is_file():
+                errors.append(f"{name}: take is missing")
+            elif sha256(path) != item["source_sha256"]:
+                errors.append(f"{name}: take changed after rendering (sha256 mismatch); "
+                              "re-record or re-render")
+
+    binding = gate.get("delivery")
+    if isinstance(binding, dict) and binding.get("sha256"):
+        path = bound_path(build, binding.get("file"), "delivery.generated.md", errors,
+                          "delivery note")
+        if path is not None:
+            if not path.is_file():
+                errors.append(f"{path.name}: delivery note is missing")
+            elif sha256(path) != binding["sha256"]:
+                errors.append(f"{path.name} was edited after rendering (sha256 mismatch)")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("build", type=Path, help="screen_demo[-<slug>] build directory")
@@ -350,8 +417,10 @@ def main() -> int:
             episode = load_json(episode_path)
         except RenderError as exc:
             errors.append(str(exc))
-    # episode.json is outside every hash chain, so a feedback binding in the gate
-    # report triggers the tamper checks even when the episode no longer says feedback
+    if gate:
+        check_bindings(build, episode, gate, errors)
+    # A feedback binding in the gate report triggers the tamper checks even when the
+    # episode no longer says feedback.
     binding = gate.get("feedback") if isinstance(gate, dict) else None
     feedback_episode = isinstance(episode, dict) and episode.get("intent") == "feedback"
     if feedback_episode or (isinstance(binding, dict) and binding):

@@ -11,6 +11,7 @@ sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / "skills" / "delivery-video" / "scripts"
 sys.path.insert(0, str(SCRIPTS))
+import dv_core  # noqa: E402
 import dv_notes  # noqa: E402
 import verify_delivery as verify  # noqa: E402
 
@@ -74,22 +75,9 @@ class FeedbackReportBindingTests(unittest.TestCase):
             check=True,
         )
         digest = verify.sha256(video)
-        report = {
-            "profile": "delivery-v1",
-            "status": "pass",
-            "video": "screen_demo.mp4",
-            "video_sha256": digest,
-            "duration_s": 2.0,
-            "hard_failures": [],
-            "warnings": [],
-            "notices": [],
-            "score": {"total": 100},
-            "checks": {},
-        }
         (cls.base / "quality_gate").mkdir()
-        report_path = cls.base / "quality_gate" / "report.json"
-        report_path.write_text(json.dumps(report), encoding="utf-8")
-        (cls.base / "episode.json").write_text(
+        episode_path = cls.base / "episode.json"
+        episode_path.write_text(
             json.dumps(
                 {
                     "voice": "zh-CN-YunxiNeural",
@@ -101,6 +89,30 @@ class FeedbackReportBindingTests(unittest.TestCase):
             ),
             encoding="utf-8",
         )
+        timeline_path = cls.base / "timeline.json"
+        timeline_path.write_text(
+            json.dumps([dict(item, kind="shot", speed=0.7, source_sha256=digest)
+                        for item in TIMELINE]),
+            encoding="utf-8",
+        )
+        report = {
+            "profile": "delivery-v1",
+            "status": "pass",
+            "video": "screen_demo.mp4",
+            "video_sha256": digest,
+            "duration_s": 2.0,
+            "hard_failures": [],
+            "warnings": [],
+            "notices": [],
+            "score": {"total": 100},
+            "checks": {},
+            "episode": {"file": "episode.json",
+                        "sha256": dv_core.content_sha256(json.loads(episode_path.read_text(
+                            encoding="utf-8")))},
+            "timeline": {"file": "timeline.json", "sha256": verify.sha256(timeline_path)},
+        }
+        report_path = cls.base / "quality_gate" / "report.json"
+        report_path.write_text(json.dumps(report), encoding="utf-8")
         feedback_path = dv_notes.write_feedback_report(cls.base, ISSUE, SEGMENTS, report)
         markdown_path = dv_notes.write_feedback_markdown(
             cls.base, ISSUE, SEGMENTS, TIMELINE, report

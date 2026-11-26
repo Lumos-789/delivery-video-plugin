@@ -37,18 +37,27 @@ from dv_core import (
     SEVERITIES,
     SPEED_MAX,
     SPEED_MIN,
+    SPEED_NOTICE,
     TAIL,
     W,
     RenderError,
     check_tools,
+    content_sha256,
     crop_error,
     duration,
     run,
+    sha256,
 )
 from dv_draw import header, load_fonts, repro_panel, subtitle
 from dv_episode import Source, validate
 from dv_gate import quality_gate
-from dv_notes import bind_feedback_evidence, write_feedback_markdown, write_feedback_report
+from dv_notes import (
+    bind_feedback_evidence,
+    write_delivery_note,
+    write_feedback_markdown,
+    write_feedback_report,
+    write_report,
+)
 from dv_tts import group_lines, synth
 
 
@@ -156,7 +165,7 @@ def render_segment(segment: dict, source: Source, mp3: Path, chars: list[dict],
          "-ar", "44100", "-ac", "2", "-c:a", "pcm_s16le",
          str(output.with_suffix(".wav"))])
     print(f"RENDERED {segment['id']}: {seconds:.2f}s {speed:.2f}x", flush=True)
-    return output, seconds
+    return output, seconds, speed
 
 
 def loudnorm_finalize(raw: Path, final: Path) -> None:
@@ -191,15 +200,30 @@ def cmd_render(build: Path) -> int:
     layout = episode.get("layout", "banded")
     voice, rate = episode["voice"], episode.get("rate", "+5%")
 
-    tracks, timeline, offset = [], [], 0.0
+    tracks, timeline, retimed, offset = [], [], [], 0.0
+    take_digests: dict = {}
     for segment in segments:
         mp3, chars = asyncio.run(synth(segment, voice, rate, build))
-        clip, seconds = render_segment(segment, validation.sources[segment["id"]], mp3,
-                                       chars, build, feedback, layout)
+        source = validation.sources[segment["id"]]
+        clip, seconds, speed = render_segment(segment, source, mp3, chars, build, feedback, layout)
         tracks.append(clip)
-        timeline.append({"id": segment["id"], "start": round(offset, 3),
-                         "end": round(offset + seconds, 3), "source": segment["shot"],
-                         "source_start": segment["start"], "source_end": segment["end"]})
+        if source.path not in take_digests:
+            take_digests[source.path] = sha256(source.path)
+        entry = {"id": segment["id"], "kind": "shot", "label": segment["label"]}
+        if segment.get("case"):
+            entry["case"] = segment["case"]
+        entry.update({
+            "start": round(offset, 3), "end": round(offset + seconds, 3),
+            "source": segment["shot"],
+            "source_start": segment["start"], "source_end": segment["end"],
+            "speed": round(speed, 3), "source_sha256": take_digests[source.path],
+        })
+        timeline.append(entry)
+        if not SPEED_NOTICE[0] <= speed <= SPEED_NOTICE[1]:
+            retimed.append({"id": segment["id"], "speed": round(speed, 3)})
+            print(f"WARN {segment['id']}: playback {speed:.2f}x -- the footage is "
+                  f"{'fast-forwarded' if speed > 1 else 'slowed down'}; "
+                  "it is disclosed in delivery.generated.md", flush=True)
         offset += seconds
 
     concat = build / "clips.txt"
@@ -229,11 +253,14 @@ def cmd_render(build: Path) -> int:
         run(["ffmpeg", "-nostdin", "-y", "-v", "error",
              "-ss", str((item["start"] + item["end"]) / 2), "-i", str(final),
              "-frames:v", "1", str(build / f"preview_{index:02d}.png")])
-    (build / "timeline.json").write_text(
+    timeline_path = build / "timeline.json"
+    timeline_path.write_text(
         json.dumps(timeline, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
     report = quality_gate(final, build / "quality_gate")
+    report["episode"] = {"file": "episode.json", "sha256": content_sha256(episode)}
+    report["timeline"] = {"file": "timeline.json", "sha256": sha256(timeline_path)}
     if feedback is not None:
         feedback_report_path = write_feedback_report(build, feedback, segments, report)
         markdown_path = write_feedback_markdown(build, feedback, segments, timeline, report)
@@ -248,6 +275,11 @@ def cmd_render(build: Path) -> int:
             f"sha256={binding['sha256']} markdown_sha256={binding['markdown_sha256']}",
             flush=True,
         )
+    else:
+        note_path = write_delivery_note(build, episode, timeline, report, retimed)
+        report["delivery"] = {"file": note_path.name, "sha256": sha256(note_path)}
+        write_report(build / "quality_gate" / "report.json", report)
+        print(f"NOTE {note_path}", flush=True)
     print(f"COMPLETE {final} duration={duration(final):.3f}s "
           f"gate={report['status']} score={report['score']['total']}", flush=True)
     for notice in report["notices"]:

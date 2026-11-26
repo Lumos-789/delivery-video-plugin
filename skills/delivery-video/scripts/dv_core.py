@@ -18,6 +18,8 @@ LEAD = 0.15
 TAIL = 0.45
 PROFILE = "delivery-v1"
 SPEED_MIN, SPEED_MAX = 0.3, 3.0
+# Playback outside this band is legal but must be called out and disclosed in the note.
+SPEED_NOTICE = (0.7, 1.5)
 LAYOUTS = ("banded", "fullbleed")
 MAX_LINE = 24
 MIN_EDGE_TTS = (7, 3, 1)

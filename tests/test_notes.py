@@ -62,5 +62,36 @@ class FeedbackNoteTests(unittest.TestCase):
         self.assertIn("`take\\|01 .mp4`", markdown)
 
 
+class DeliveryNoteTests(unittest.TestCase):
+    REPORT = {
+        "duration_s": 7.3, "video_sha256": "abc123", "status": "pass", "profile": "delivery-v1",
+        "score": {"total": 96}, "episode": {"sha256": "ep"}, "timeline": {"sha256": "tl"},
+        "warnings": [{"code": "T301", "message": "longest freeze span 0.9s"}],
+    }
+    TIMELINE = [{"id": "05-wait", "kind": "shot", "label": "等待", "case": "F-02", "start": 0.0,
+                 "end": 7.3, "source": "take-02.mp4", "source_start": 0.5, "source_end": 11.0,
+                 "speed": 2.35}]
+
+    def test_rows_retime_notes_and_evidence_come_from_the_rendered_facts(self):
+        episode = {"title": "订单演示", "evidence": {"git_sha": "abc1234", "tickets": ["T-1", "T-2"]}}
+
+        text = dv_notes.delivery_markdown(episode, self.TIMELINE, self.REPORT,
+                                          [{"id": "05-wait", "speed": 2.35}])
+
+        self.assertIn("# 订单演示", text)
+        self.assertIn("SHA256 `abc123`", text)
+        self.assertIn("- git_sha: abc1234", text)
+        self.assertIn("- tickets: T-1, T-2", text)
+        self.assertIn("| 1 | F-02 | 等待 | 00:00.000-00:07.300 | `take-02.mp4` "
+                      "| 0.50-11.00s | 2.35x |", text)
+        self.assertIn("05-wait plays at 2.35x (footage fast-forwarded)", text)
+        self.assertIn("- `T301`: longest freeze span 0.9s", text)
+
+    def test_a_slowed_segment_is_named_as_slowed_down(self):
+        text = dv_notes.delivery_markdown({}, self.TIMELINE, self.REPORT,
+                                          [{"id": "05-wait", "speed": 0.6}])
+        self.assertIn("plays at 0.60x (footage slowed down)", text)
+
+
 if __name__ == "__main__":
     unittest.main()
