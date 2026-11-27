@@ -175,5 +175,30 @@ class QualityGateDetectTests(unittest.TestCase):
                                loudnorm_ok=False)
         self.assertIn("L102", [item["code"] for item in report["hard_failures"]])
         self.assertEqual(report["status"], "fail")
+    def test_a_short_video_may_carry_a_normal_opening_and_closing_card(self):
+        cards = [{"start": 0.0, "end": 4.0}, {"start": 10.0, "end": 12.0}]
+
+        report = self.run_gate({"blackdetect": "", "freezedetect": "", "silencedetect": ""},
+                               exempt=cards)
+
+        self.assertEqual(report["status"], "pass")
+        self.assertEqual(report["exempt"]["seconds"], 6.0)
+
+    def test_cards_may_not_outlast_the_footage_even_in_a_short_video(self):
+        report = self.run_gate({"blackdetect": "", "freezedetect": "", "silencedetect": ""},
+                               exempt=[{"start": 0.0, "end": 7.5}])
+        self.assertEqual([item["code"] for item in report["hard_failures"]], ["C301"])
+
+    def test_the_short_video_allowance_is_capped_at_eight_seconds(self):
+        self.DURATION = 30.0
+        quiet = {"blackdetect": "", "freezedetect": "", "silencedetect": ""}
+        within = [{"start": 0.0, "end": 5.0}, {"start": 27.1, "end": 30.0}]
+        over = [{"start": 0.0, "end": 5.0}, {"start": 26.5, "end": 30.0}]
+
+        self.assertEqual(self.run_gate(quiet, exempt=within)["status"], "pass")
+        failing = self.run_gate(quiet, exempt=over)
+
+        self.assertEqual([item["code"] for item in failing["hard_failures"]], ["C301"])
+        self.assertIn("8s", failing["hard_failures"][0]["message"])
 if __name__ == "__main__":
     unittest.main()

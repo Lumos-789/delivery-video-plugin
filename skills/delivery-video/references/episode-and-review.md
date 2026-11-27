@@ -32,7 +32,7 @@
 
 A card is drawn by the renderer: dark canvas, an accent bar, the `title` in large type and the usual chips. With `text` the card is narrated like any shot and lasts as long as its narration; when the text differs from the title it also runs as a subtitle. Without `text` the card is silent for `duration`. A card must not carry `shot`, `start`, `end`, `source` or `crop`.
 
-The gate treats a card's interval as allowed to be still and silent: those intervals are cut out of the black, freeze and silence scans, they are listed in the report under `exempt`, and `T304` is measured against the remaining footage. Cards may not carry the demo — more than 25% of the video as cards fails with `C301`. A closing card is a result state when its title states the result.
+The gate treats a card's interval as allowed to be still and silent: those intervals are cut out of the black, freeze and silence scans, they are listed in the report under `exempt`, and `T304` is measured against the remaining footage. Cards may not carry the demo: `C301` fails a video whose cards exceed 25% of its length, or 8 seconds in a shorter video, and any video whose cards run longer than its real footage. A narrated opening and a closing card of up to 8 seconds together are fine in a short video. A closing card is a result state when its title states the result.
 
 ### Feedback issues
 

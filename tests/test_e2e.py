@@ -825,5 +825,19 @@ class OfflineRenderTests(unittest.TestCase):
         other_case = dict(safe, **{"02-readback": source(build / "CLIPS" / "02-readback.mp4")})
         with self.assertRaisesRegex(render.RenderError, "refusing to render"):
             render.guard_outputs(build, episode["segments"], other_case, VOICE, "+5%")
+    def test_a_short_video_keeps_its_narrated_opening_and_closing_card(self):
+        build = self.copy("screen_demo-short-with-cards")
+        episode = card_episode()
+        for segment in episode["segments"]:
+            if segment.get("text"):
+                seed_narration(build, segment)
+        write_episode(build, episode)
+
+        code, output = run(str(SCRIPTS / "render.py"), "render", str(build))
+
+        self.assertEqual(code, 0, output)
+        timeline = self.timeline(build)
+        card_time = sum(item["end"] - item["start"] for item in timeline if item["kind"] == "card")
+        self.assertGreater(card_time / timeline[-1]["end"], 0.25)
 if __name__ == "__main__":
     unittest.main()

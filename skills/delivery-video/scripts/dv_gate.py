@@ -8,7 +8,17 @@ import re
 import subprocess
 from pathlib import Path
 
-from dv_core import CARD_SHARE_MAX, FPS, H, PROFILE, W, probe_json, sha256, write_text_atomic
+from dv_core import (
+    CARD_SHARE_MAX,
+    CARD_SHORT_VIDEO_ALLOWANCE,
+    FPS,
+    H,
+    PROFILE,
+    W,
+    probe_json,
+    sha256,
+    write_text_atomic,
+)
 
 
 def parse_detects(log: str, key: str) -> list[dict]:
@@ -107,11 +117,17 @@ def quality_gate(video: Path, work: Path, exempt: list[dict] | None = None) -> d
                     "content; inspect text at 1:1 before publishing"
                 ),
             })
-        if card_s / total > CARD_SHARE_MAX:
+        # A quarter of the video, or in a short video up to the allowance — but never
+        # more card time than real footage.
+        card_limit = max(CARD_SHARE_MAX * total,
+                         min(CARD_SHORT_VIDEO_ALLOWANCE, total - card_s))
+        if card_s > card_limit:
             hard.append({"code": "C301",
-                         "message": f"static cards cover {card_s / total:.0%} of the video "
-                                    f"(max {CARD_SHARE_MAX:.0%}); cards frame the result, "
-                                    "they must not carry the demo"})
+                         "message": f"static cards take {card_s:.1f}s of a {total:.1f}s video; "
+                                    f"cards may cover {CARD_SHARE_MAX:.0%} of the video, or up "
+                                    f"to {CARD_SHORT_VIDEO_ALLOWANCE:g}s in a short video when "
+                                    "the footage runs longer -- cards frame the result, they "
+                                    "must not carry the demo"})
 
     if audio_stream is not None:
         ebur = subprocess.run(

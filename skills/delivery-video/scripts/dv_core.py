@@ -37,7 +37,11 @@ SEGMENT_KINDS = ("shot", "card")
 # silence scans, within these limits.
 CARD_MIN, CARD_MAX, CARD_DEFAULT = 1.0, 8.0, 2.5
 CARD_TITLE_MAX = 40
+# Cards may take this share of the video. A narrated opening and a closing card are
+# normal even in a short video, so up to CARD_SHORT_VIDEO_ALLOWANCE seconds are accepted
+# regardless of the share — as long as the footage runs at least as long as the cards.
 CARD_SHARE_MAX = 0.25
+CARD_SHORT_VIDEO_ALLOWANCE = 8.0
 # What a visual review must score, one 0..1 number each; "pass" needs every score at
 # or above CRITIC_MIN_SCORE.
 CRITIC_MIN_SCORE = 0.8

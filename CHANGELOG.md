@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.3.1
+
+- `C301` no longer blocks a normal narrated opening and closing card in a short video.
+  1.3.0 failed any video whose cards exceeded 25% of its length, which a 5-second
+  narrated opening and a closing card do in everything under about 30 seconds. Cards
+  may now take up to 8 seconds regardless of the share, provided the real footage
+  runs at least as long as the cards; a slideshow still fails.
+
 ## 1.3.0
 
 Behavior changes to know before upgrading:
